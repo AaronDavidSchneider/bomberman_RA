@@ -6,6 +6,13 @@ from settings import s
 
 import random
 from sklearn.cluster import KMeans
+from sklearn.ensemble import RandomForestRegressor
+
+
+
+GAMMA = 0.95 # hyperparameter
+ALPHA = 0.01 # hyperparameter Learning rate
+EPSILON = 0.2 # hyperparameter exploration, exploitation
 
 def statereduction(self):
     # Gather information about the game state
@@ -27,6 +34,23 @@ def statereduction(self):
 
     return state,s_dim
 
+def get_reward(self):
+    """"
+    REWARD Function, needs to be optimized manually to train the agent with rewards
+    """"
+    reward = 0
+    if e.COIN_COLLECTED in self.events:
+        reward +=1
+    if e.KILLED_OPPONENT in self.events:
+        reward +=2
+    if e.GOT_KILLED in self.events:
+        reward -=1
+    if e.KILLED_SELF in self.events:
+        reward -=2
+    if e.INVALID_ACTION in self.events:
+        reward -=1
+
+    return reward
 
 
 def setup(self):
@@ -42,7 +66,10 @@ def setup(self):
     self.reduced_state,self.state_dim = self.statereduction()
 
     self.q = np.zeros((*self.state_dim,6))
-    self.epsilon = 0.2 # Exploration, Exploitation tradeoff
+
+    self.r = np.zeros(max_steps)
+    self.a = np.zeros(max_steps)
+    self.state = np.zeros((max_steps,*self.state_dim))
 
 
 
@@ -64,14 +91,30 @@ def act(self):
     # possible actions to be taken
     possible_actions = ['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT']
 
-    # needs to be adjusted!!!
-    valid_actions =    range(6)
+    # adapted from simple agent:
+    # Check which moves make sense at all
+    directions = [(x,y), (x+1,y), (x-1,y), (x,y+1), (x,y-1)]
+    valid_tiles, valid_actions = [], []
+    for d in directions:
+        if ((arena[d] == 0) and
+            (self.game_state['explosions'][d] <= 1) and
+            (bomb_map[d] > 0) and
+            (not d in others) and
+            (not d in bomb_xys)):
+            valid_tiles.append(d)
+    if (x-1,y) in valid_tiles: valid_actions.append(1)
+    if (x+1,y) in valid_tiles: valid_actions.append(0)
+    if (x,y-1) in valid_tiles: valid_actions.append(2)
+    if (x,y+1) in valid_tiles: valid_actions.append(3)
+    if (x,y)   in valid_tiles: valid_actions.append(5)
+    # Disallow the BOMB action if agent dropped a bomb in the same spot recently
+    if (bombs_left > 0) and (x,y) not in self.bomb_history: valid_actions.append(4)
 
     # in case of exploration, choose random:
     prob_actions = [.23, .23, .23, .23, .08, 0.]
 
     # take decision based on exploaration and exploitation strategy
-    if (random.random() < self.epsilon):
+    if (random.random() < EPSILON):
         self.next_action = np.random.choice(possible_actions[valid_actions], p=prob_actions[valid_actions])
     else:
         self.next_action = possible_actions[np.argmax(self.q[...,valid_actions],axis=-1)]
@@ -87,6 +130,14 @@ def reward_update(self):
     contrast to act, this method has no time limit.
     """
     self.logger.debug(f'Encountered {len(self.events)} game event(s)')
+    # save reduced state
+    self.reduced_state,self.state_dim = self.statereduction()
+
+    i = self.game_state['step']
+
+    self.a[i] = self.next_action
+    self.r[i] = get_reward()
+    self.s[i] = self.reduced_state
 
 
 def end_of_episode(self):
@@ -97,3 +148,25 @@ def end_of_episode(self):
     final step. You should place your actual learning code in this method.
     """
     self.logger.debug(f'Encountered {len(self.events)} game event(s) in final step')
+
+    episode = self.game_state['step'] #Länge der Runde.
+    max_steps = s['max_steps']
+
+    for i in range(episode-1):
+        Y[i] = self.r[i] + GAMMA*np.max(self.q[self.state[i+1]])-self.q[self.state[i],self.a[i]]
+
+    #########################
+    # do regression:
+    regr = RandomForestRegressor(max_depth=2, n_estimators=100)
+    regr.fit(self.q,Y)
+
+    #update q:
+    self.q += ALPHA * regr.predict(self.q)
+
+
+    ##########################
+    # flush Y,r,s,a:
+    Y = np.zeros(max_steps)
+    self.r = np.zeros(max_steps)
+    self.a = np.zeros(max_steps)
+    self.state = np.zeros((max_steps,*self.state_dim))
