@@ -3,6 +3,7 @@ import numpy as np
 from time import time, sleep
 
 from settings import s
+from settings import e
 
 import random
 from sklearn.cluster import KMeans
@@ -29,15 +30,17 @@ def statereduction(self):
                 bomb_map[i,j] = min(bomb_map[i,j], t)
 
     # statereduction-function needs to be changed!!
-    state = (x,y) #simplest case
-    s_dim = arena.shape
+    #simplest case:
+    state = np.zeros_like(arena)
+    state[x,y] = 1
+    s_dim = state.shape
 
     return state,s_dim
 
 def get_reward(self):
-    """"
+    """
     REWARD Function, needs to be optimized manually to train the agent with rewards
-    """"
+    """
     reward = 0
     if e.COIN_COLLECTED in self.events:
         reward +=1
@@ -63,13 +66,16 @@ def setup(self):
     file for debugging (see https://docs.python.org/3.7/library/logging.html).
     """
     self.logger.debug('Successfully entered setup code')
-    self.reduced_state,self.state_dim = self.statereduction()
+
+    self.state_dim = (s.cols,s.rows)##needs to be done automatically later on!!!
+    self.logger.debug('sate_dim = '+str(self.state_dim))
 
     self.q = np.zeros((*self.state_dim,6))
 
-    self.r = np.zeros(max_steps)
-    self.a = np.zeros(max_steps)
-    self.state = np.zeros((max_steps,*self.state_dim))
+    self.r = np.zeros(s.max_steps)
+    self.a = np.zeros(s.max_steps)
+    self.state = np.zeros((s.max_steps,*self.state_dim))
+    self.bomb_history = []
 
 
 
@@ -89,10 +95,23 @@ def act(self):
     """
 
     # possible actions to be taken
-    possible_actions = ['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT']
-
     # adapted from simple agent:
     # Check which moves make sense at all
+
+    possible_actions = ['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT']
+    x, y, _, bombs_left = self.game_state['self']
+    arena = self.game_state['arena']
+    bombs = self.game_state['bombs']
+    bomb_map = np.ones(arena.shape) * 5
+    bomb_xys = [(x,y) for (x,y,t) in bombs]
+    others = [(x,y) for (x,y,n,b) in self.game_state['others']]
+    coins = self.game_state['coins']
+
+    for xb,yb,t in bombs:
+        for (i,j) in [(xb+h, yb) for h in range(-3,4)] + [(xb, yb+h) for h in range(-3,4)]:
+            if (0 < i < bomb_map.shape[0]) and (0 < j < bomb_map.shape[1]):
+                bomb_map[i,j] = min(bomb_map[i,j], t)
+
     directions = [(x,y), (x+1,y), (x-1,y), (x,y+1), (x,y-1)]
     valid_tiles, valid_actions = [], []
     for d in directions:
@@ -110,15 +129,21 @@ def act(self):
     # Disallow the BOMB action if agent dropped a bomb in the same spot recently
     if (bombs_left > 0) and (x,y) not in self.bomb_history: valid_actions.append(4)
 
+    valid_actions = np.array(valid_actions)
+    possible_actions = np.array(possible_actions)
+    self.logger.debug(f'valid_actions: {possible_actions[valid_actions]}')
     # in case of exploration, choose random:
-    prob_actions = [.23, .23, .23, .23, .08, 0.]
+    prob_actions = np.array([.23, .23, .23, .23, .08, 0.])
+    prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
 
     # take decision based on exploaration and exploitation strategy
     if (random.random() < EPSILON):
-        self.next_action = np.random.choice(possible_actions[valid_actions], p=prob_actions[valid_actions])
+        self.next_action = np.random.choice(possible_actions[valid_actions], p=prob_actions)
     else:
-        self.next_action = possible_actions[np.argmax(self.q[...,valid_actions],axis=-1)]
+        self.next_action = possible_actions[valid_actions][int(np.mean(np.argmax(self.q[...,valid_actions],axis=-1)))]
 
+    if self.next_action == 'BOMB':
+        self.bomb_history.append((x,y))
 
 def reward_update(self):
     """Called once per step to allow intermediate rewards based on game events.
@@ -130,14 +155,30 @@ def reward_update(self):
     contrast to act, this method has no time limit.
     """
     self.logger.debug(f'Encountered {len(self.events)} game event(s)')
+    if e.INVALID_ACTION in self.events:
+        self.logger.debug(f'Encountered INVALID_ACTION')
     # save reduced state
-    self.reduced_state,self.state_dim = self.statereduction()
+    self.reduced_state,self.state_dim = statereduction(self)
 
     i = self.game_state['step']
 
-    self.a[i] = self.next_action
-    self.r[i] = get_reward()
-    self.s[i] = self.reduced_state
+    if e.MOVED_RIGHT in self.events:
+        self.a[i] = 0
+    elif e.MOVED_LEFT in self.events:
+        self.a[i] = 1
+    elif e.MOVED_UP in self.events:
+        self.a[i] = 2
+    elif e.MOVED_DOWN in self.events:
+        self.a[i] = 3
+    elif e.BOMB_DROPPED in self.events:
+        self.a[i] = 4
+    elif e.WAITED in self.events:
+        self.a[i] = 5
+    else:
+        self.a[i] = -1 #releases error!
+
+    self.r[i] = get_reward(self)
+    self.state[i] = self.reduced_state
 
 
 def end_of_episode(self):
@@ -150,7 +191,7 @@ def end_of_episode(self):
     self.logger.debug(f'Encountered {len(self.events)} game event(s) in final step')
 
     episode = self.game_state['step'] #Länge der Runde.
-    max_steps = s['max_steps']
+    max_steps = s.max_steps
 
     for i in range(episode-1):
         Y[i] = self.r[i] + GAMMA*np.max(self.q[self.state[i+1]])-self.q[self.state[i],self.a[i]]
