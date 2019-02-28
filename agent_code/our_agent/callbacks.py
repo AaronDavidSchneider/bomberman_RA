@@ -1,5 +1,7 @@
 
 import numpy as np
+np.seterr(divide='ignore', invalid='ignore')
+
 from time import time, sleep
 
 from settings import s
@@ -54,10 +56,9 @@ def statereduction(self):
 
     #state = min(weighted_state,24)
 
-    state = [coins_state,bombs_state,others_state]
+    state = (coins_state,bombs_state,others_state)
 
-    dim = int(np.sqrt(s.cols**2+s.rows**2))+1
-    s_dim = [dim,dim,dim]
+    s_dim = (self.dim,self.dim,self.dim)
 
     return state,s_dim
 
@@ -93,15 +94,15 @@ def setup(self):
     """
     self.logger.debug('Successfully entered setup code')
 
-    dim=int(np.sqrt(s.cols**2+s.rows**2))+1
-    self.state_dim = [dim,dim,dim] # warning: needs to be changed
+    self.dim=int(np.sqrt(s.cols**2+s.rows**2))+1
+    self.state_dim = (self.dim,self.dim,self.dim) # warning: needs to be changed
     self.q = np.zeros((*self.state_dim,6))
 
-    self.r = np.zeros(s.max_steps)
-    self.a = np.zeros(s.max_steps,dtype=np.int32)
-    self.state = np.zeros((s.max_steps,self.state_dim),dtype=np.int32) # warning: needs to be changed
+    self.r = []
+    self.a = []
+    self.state = [] # warning: needs to be changed
     self.bomb_history = []
-    self.reduced_state = [24,24,24]
+    self.reduced_state = (24,24,24)
 
     self.train_flag=True #temp fix
 
@@ -125,7 +126,7 @@ def act(self):
     """
 
     self.reduced_state, self.state_dim = statereduction(self)
-    self.logger.debug(f'reduced_state: {self.reduced_state}')
+    #self.logger.debug(f'reduced_state: {self.reduced_state}')
 
     # possible actions to be taken
     # adapted from simple agent:
@@ -164,19 +165,21 @@ def act(self):
 
     valid_actions = np.array(valid_actions)
     possible_actions = np.array(possible_actions)
-    self.logger.debug(f'valid_actions: {possible_actions[valid_actions]}')
+    #self.logger.debug(f'valid_actions: {possible_actions[valid_actions]}')
     # in case of exploration, choose random:
     prob_actions = np.array([.23, .23, .23, .23, .08, 0.])
-    prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
+    if len(valid_actions)>0: #reduces errors
+        prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
+        # take decision based on exploaration and exploitation strategy
+        if (random.random() < EPSILON and self.train_flag):
+            self.next_action = np.random.choice(possible_actions[valid_actions], p=prob_actions)
+        else:
+            self.next_action = possible_actions[valid_actions][np.argmax(self.q[self.reduced_state][valid_actions])]
 
-    # take decision based on exploaration and exploitation strategy
-    if (random.random() < EPSILON and self.train_flag):
-        self.next_action = np.random.choice(possible_actions[valid_actions], p=prob_actions)
+        if self.next_action == 'BOMB':
+            self.bomb_history.append((x,y))
     else:
-        self.next_action = possible_actions[valid_actions][np.argmax(self.q[*self.reduced_state,valid_actions])]
-
-    if self.next_action == 'BOMB':
-        self.bomb_history.append((x,y))
+        self.next_action = 'WAIT'
 
 def reward_update(self):
     """Called once per step to allow intermediate rewards based on game events.
@@ -191,26 +194,23 @@ def reward_update(self):
     if e.INVALID_ACTION in self.events:
         self.logger.debug(f'Encountered INVALID_ACTION')
 
-    i = self.game_state['step']
-
     if e.MOVED_RIGHT in self.events:
-        self.a[i] = 0
+        self.a.append(0)
     elif e.MOVED_LEFT in self.events:
-        self.a[i] = 1
+        self.a.append(1)
     elif e.MOVED_UP in self.events:
-        self.a[i] = 2
+        self.a.append(2)
     elif e.MOVED_DOWN in self.events:
-        self.a[i] = 3
+        self.a.append(3)
     elif e.BOMB_DROPPED in self.events:
-        self.a[i] = 4
+        self.a.append(4)
     elif e.WAITED in self.events:
-        self.a[i] = 5
+        self.a.append(5)
     else:
-        self.a[i] = -1 #releases error!
+        self.a.append(-1) #releases error
 
-    self.r[i] = get_reward(self)
-    self.state[i] = *self.reduced_state
-    self.a[i] = self.a[i]
+    self.r.append(get_reward(self))
+    self.state.append(self.reduced_state)
 
 def end_of_episode(self):
     """Called at the end of each game to hand out final rewards and do training.
@@ -227,22 +227,22 @@ def end_of_episode(self):
     h = np.zeros_like(self.q)
 
     for i in range(episode-1):
-        h[*self.state[i],self.a[i]] = self.r[i] + GAMMA*np.max(self.q[*self.state[i+1],:])-self.q[*self.state[i],self.a[i]]
+        h[self.state[i]][self.a[i]] = self.r[i] + GAMMA*np.max(self.q[self.state[i+1]])-self.q[self.state[i]][self.a[i]]
 
     #########################
     # do regression:
     regr = RandomForestRegressor(max_depth=2, n_estimators=100)
-    regr.fit(self.q,h)
+    regr.fit(self.q.reshape(self.dim*self.dim*self.dim,6),h.reshape(self.dim*self.dim*self.dim,6))
 
     #update q:
-    self.q += ALPHA * regr.predict(self.q)
+    self.q += ALPHA * regr.predict(self.q.reshape(self.dim*self.dim*self.dim,6)).reshape(self.dim,self.dim,self.dim,6)
 
 
     ##########################
     # flush Y,r,s,a:
-    self.r = np.zeros(max_steps)
-    self.a = np.zeros(max_steps)
-    self.state = np.zeros((max_steps,*self.state_dim))
+    self.r = []
+    self.a = []
+    self.state = []
 
     #########################
     # save q
