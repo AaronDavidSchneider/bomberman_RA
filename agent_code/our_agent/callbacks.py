@@ -28,7 +28,7 @@ def short_dist(self, pois):
         dist = np.sqrt(pois[:,0]**2+pois[:,1]**2)
         m    = np.argmin(dist)
 
-        return dist[m], m
+        return int(dist[m]), m
 
 
 def statereduction(self):
@@ -46,9 +46,18 @@ def statereduction(self):
                 bomb_map[i,j] = min(bomb_map[i,j], t)
 
     # statereduction-function needs to be changed!!
-    state,_ = short_dist(self,coins)
-    state = int(state)
-    s_dim = [int(np.sqrt(s.cols**2+s.rows**2))+1]
+    coins_state,_ = short_dist(self,coins)
+    bombs_state,_ = short_dist(self,bomb_xys)
+    others_state,_ = short_dist(self,others)
+
+    #weighted_state = int(0.4*coins_state+0.4*bombs_state+0.1*others_state)
+
+    #state = min(weighted_state,24)
+
+    state = [coins_state,bombs_state,others_state]
+
+    dim = int(np.sqrt(s.cols**2+s.rows**2))+1
+    s_dim = [dim,dim,dim]
 
     return state,s_dim
 
@@ -58,15 +67,17 @@ def get_reward(self):
     """
     reward = 0
     if e.COIN_COLLECTED in self.events:
-        reward +=1
+        reward += 100
     if e.KILLED_OPPONENT in self.events:
-        reward +=2
+        reward += 500
+    if e.CRATE_DESTROYED in self.events:
+        reward += 20
+
     if e.GOT_KILLED in self.events:
-        reward -=1
+        reward -= 100
     if e.KILLED_SELF in self.events:
-        reward -=2
-    if e.INVALID_ACTION in self.events:
-        reward -=1
+        reward -= 200
+
 
     return reward
 
@@ -82,15 +93,20 @@ def setup(self):
     """
     self.logger.debug('Successfully entered setup code')
 
-    self.state_dim = [int(np.sqrt(s.cols**2+s.rows**2))+1] # warning: needs to be changed
+    dim=int(np.sqrt(s.cols**2+s.rows**2))+1
+    self.state_dim = [dim,dim,dim] # warning: needs to be changed
     self.q = np.zeros((*self.state_dim,6))
 
     self.r = np.zeros(s.max_steps)
     self.a = np.zeros(s.max_steps,dtype=np.int32)
-    self.state = np.zeros(s.max_steps,dtype=np.int32) # warning: needs to be changed
+    self.state = np.zeros((s.max_steps,self.state_dim),dtype=np.int32) # warning: needs to be changed
     self.bomb_history = []
-    self.reduced_state = 24
+    self.reduced_state = [24,24,24]
 
+    self.train_flag=True #temp fix
+
+    if not self.train_flag:
+        self.q = np.load('agent_code/our_agent/q.npy')
 
 
 
@@ -154,10 +170,10 @@ def act(self):
     prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
 
     # take decision based on exploaration and exploitation strategy
-    if (random.random() < EPSILON):
+    if (random.random() < EPSILON and self.train_flag):
         self.next_action = np.random.choice(possible_actions[valid_actions], p=prob_actions)
     else:
-        self.next_action = possible_actions[valid_actions][np.argmax(self.q[self.reduced_state,valid_actions])]
+        self.next_action = possible_actions[valid_actions][np.argmax(self.q[*self.reduced_state,valid_actions])]
 
     if self.next_action == 'BOMB':
         self.bomb_history.append((x,y))
@@ -193,7 +209,7 @@ def reward_update(self):
         self.a[i] = -1 #releases error!
 
     self.r[i] = get_reward(self)
-    self.state[i] = self.reduced_state
+    self.state[i] = *self.reduced_state
     self.a[i] = self.a[i]
 
 def end_of_episode(self):
@@ -211,10 +227,7 @@ def end_of_episode(self):
     h = np.zeros_like(self.q)
 
     for i in range(episode-1):
-        print(self.a[i], self.state[i])
-
-    for i in range(episode-1):
-        h[self.state[i],self.a[i]] = self.r[i] + GAMMA*np.max(self.q[self.state[i+1],:])-self.q[self.state[i],self.a[i]]
+        h[*self.state[i],self.a[i]] = self.r[i] + GAMMA*np.max(self.q[*self.state[i+1],:])-self.q[*self.state[i],self.a[i]]
 
     #########################
     # do regression:
@@ -227,7 +240,10 @@ def end_of_episode(self):
 
     ##########################
     # flush Y,r,s,a:
-    Y = np.zeros(max_steps)
     self.r = np.zeros(max_steps)
     self.a = np.zeros(max_steps)
     self.state = np.zeros((max_steps,*self.state_dim))
+
+    #########################
+    # save q
+    np.save('agent_code/our_agent/q.npy',self.q)

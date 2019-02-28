@@ -9,7 +9,7 @@ settings = {
     # Display
     'width': 1000,
     'height': 600,
-    'gui': False,
+    'gui': True,
     'fps': 15,
 
     # Main loop
