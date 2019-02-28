@@ -18,7 +18,7 @@ ALPHA = 0.01 # hyperparameter Learning rate
 EPSILON = 0.2 # hyperparameter exploration, exploitation
 
 def short_dist(self, pois):
-    x, y, _, _ = self.game_state['self']
+    x, y, _, _, _ = self.game_state['self']
     pois = np.array(pois)
 
     if pois.size == 0:
@@ -36,10 +36,10 @@ def short_dist(self, pois):
 def statereduction(self):
     # Gather information about the game state
     arena = self.game_state['arena']
-    x, y, _, bombs_left = self.game_state['self']
+    x, y, _, bombs_left, score = self.game_state['self']
     bombs = self.game_state['bombs']
     bomb_xys = [(x,y) for (x,y,t) in bombs]
-    others = [(x,y) for (x,y,n,b) in self.game_state['others']]
+    others = [(x,y) for (x,y,n,b,s) in self.game_state['others']]
     coins = self.game_state['coins']
     bomb_map = np.ones(arena.shape) * 5
     for xb,yb,t in bombs:
@@ -104,9 +104,9 @@ def setup(self):
     self.bomb_history = []
     self.reduced_state = (24,24,24)
 
-    self.train_flag=True #temp fix
+    train=self.game_state['train']
 
-    if not self.train_flag:
+    if not train:
         self.q = np.load('agent_code/our_agent/q.npy')
 
 
@@ -114,7 +114,8 @@ def setup(self):
 def act(self):
     """Called each game step to determine the agent's next action.
 
-    You can find out about the state of the game environment via self.game_state,
+    You can find out about the state of th
+    e game environment via self.game_state,
     which is a dictionary. Consult 'get_state_for_agent' in environment.py to see
     what it contains.
 
@@ -133,13 +134,14 @@ def act(self):
     # Check which moves make sense at all
 
     possible_actions = ['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT']
-    x, y, _, bombs_left = self.game_state['self']
+    x, y, _, bombs_left, score = self.game_state['self']
     arena = self.game_state['arena']
     bombs = self.game_state['bombs']
     bomb_map = np.ones(arena.shape) * 5
     bomb_xys = [(x,y) for (x,y,t) in bombs]
-    others = [(x,y) for (x,y,n,b) in self.game_state['others']]
+    others = [(x,y) for (x,y,n,b,s) in self.game_state['others']]
     coins = self.game_state['coins']
+    train = self.game_state['train']
 
     for xb,yb,t in bombs:
         for (i,j) in [(xb+h, yb) for h in range(-3,4)] + [(xb, yb+h) for h in range(-3,4)]:
@@ -171,7 +173,7 @@ def act(self):
     if len(valid_actions)>0: #reduces errors
         prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
         # take decision based on exploaration and exploitation strategy
-        if (random.random() < EPSILON and self.train_flag):
+        if (random.random() < EPSILON and train):
             self.next_action = np.random.choice(possible_actions[valid_actions], p=prob_actions)
         else:
             self.next_action = possible_actions[valid_actions][np.argmax(self.q[self.reduced_state][valid_actions])]
