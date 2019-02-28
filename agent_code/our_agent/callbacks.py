@@ -15,6 +15,22 @@ GAMMA = 0.95 # hyperparameter
 ALPHA = 0.01 # hyperparameter Learning rate
 EPSILON = 0.2 # hyperparameter exploration, exploitation
 
+def short_dist(self, pois):
+    x, y, _, _ = self.game_state['self']
+    pois = np.array(pois)
+
+    if pois.size == 0:
+        return int(np.sqrt(s.cols**2+s.rows**2)),-1
+    else:
+        pois[:,0] -= x
+        pois[:,1] -= y
+
+        dist = np.sqrt(pois[:,0]**2+pois[:,1]**2)
+        m    = np.argmin(dist)
+
+        return dist[m], m
+
+
 def statereduction(self):
     # Gather information about the game state
     arena = self.game_state['arena']
@@ -30,10 +46,9 @@ def statereduction(self):
                 bomb_map[i,j] = min(bomb_map[i,j], t)
 
     # statereduction-function needs to be changed!!
-    #simplest case:
-    state = np.zeros_like(arena)
-    state[x,y] = 1
-    s_dim = state.shape
+    state,_ = short_dist(self,coins)
+    state = int(state)
+    s_dim = [int(np.sqrt(s.cols**2+s.rows**2))+1]
 
     return state,s_dim
 
@@ -67,15 +82,14 @@ def setup(self):
     """
     self.logger.debug('Successfully entered setup code')
 
-    self.state_dim = (s.cols,s.rows)##needs to be done automatically later on!!!
-    self.logger.debug('sate_dim = '+str(self.state_dim))
-
+    self.state_dim = [int(np.sqrt(s.cols**2+s.rows**2))+1] # warning: needs to be changed
     self.q = np.zeros((*self.state_dim,6))
 
     self.r = np.zeros(s.max_steps)
-    self.a = np.zeros(s.max_steps)
-    self.state = np.zeros((s.max_steps,*self.state_dim))
+    self.a = np.zeros(s.max_steps,dtype=np.int32)
+    self.state = np.zeros(s.max_steps) # warning: needs to be changed
     self.bomb_history = []
+    self.reduced_state = 24
 
 
 
@@ -93,6 +107,9 @@ def act(self):
     in settings.py, execution is interrupted by the game and the current value
     of self.next_action will be used. The default value is 'WAIT'.
     """
+
+    self.reduced_state, self.state_dim = statereduction(self)
+    self.logger.debug(f'reduced_state: {self.reduced_state}')
 
     # possible actions to be taken
     # adapted from simple agent:
@@ -140,7 +157,7 @@ def act(self):
     if (random.random() < EPSILON):
         self.next_action = np.random.choice(possible_actions[valid_actions], p=prob_actions)
     else:
-        self.next_action = possible_actions[valid_actions][int(np.mean(np.argmax(self.q[...,valid_actions],axis=-1)))]
+        self.next_action = possible_actions[valid_actions][np.argmax(self.q[self.reduced_state,valid_actions])]
 
     if self.next_action == 'BOMB':
         self.bomb_history.append((x,y))
@@ -157,8 +174,6 @@ def reward_update(self):
     self.logger.debug(f'Encountered {len(self.events)} game event(s)')
     if e.INVALID_ACTION in self.events:
         self.logger.debug(f'Encountered INVALID_ACTION')
-    # save reduced state
-    self.reduced_state,self.state_dim = statereduction(self)
 
     i = self.game_state['step']
 
@@ -179,7 +194,7 @@ def reward_update(self):
 
     self.r[i] = get_reward(self)
     self.state[i] = self.reduced_state
-
+    self.a[i] = self.a[i]
 
 def end_of_episode(self):
     """Called at the end of each game to hand out final rewards and do training.
@@ -192,6 +207,8 @@ def end_of_episode(self):
 
     episode = self.game_state['step'] #Länge der Runde.
     max_steps = s.max_steps
+
+    Y = np.zeros(episode-1)
 
     for i in range(episode-1):
         Y[i] = self.r[i] + GAMMA*np.max(self.q[self.state[i+1]])-self.q[self.state[i],self.a[i]]
