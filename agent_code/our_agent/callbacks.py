@@ -87,7 +87,7 @@ def setup(self):
 
     self.r = np.zeros(s.max_steps)
     self.a = np.zeros(s.max_steps,dtype=np.int32)
-    self.state = np.zeros(s.max_steps) # warning: needs to be changed
+    self.state = np.zeros(s.max_steps,dtype=np.int32) # warning: needs to be changed
     self.bomb_history = []
     self.reduced_state = 24
 
@@ -208,15 +208,18 @@ def end_of_episode(self):
     episode = self.game_state['step'] #Länge der Runde.
     max_steps = s.max_steps
 
-    Y = np.zeros(episode-1)
+    h = np.zeros_like(self.q)
 
     for i in range(episode-1):
-        Y[i] = self.r[i] + GAMMA*np.max(self.q[self.state[i+1]])-self.q[self.state[i],self.a[i]]
+        print(self.a[i], self.state[i])
+
+    for i in range(episode-1):
+        h[self.state[i],self.a[i]] = self.r[i] + GAMMA*np.max(self.q[self.state[i+1],:])-self.q[self.state[i],self.a[i]]
 
     #########################
     # do regression:
     regr = RandomForestRegressor(max_depth=2, n_estimators=100)
-    regr.fit(self.q,Y)
+    regr.fit(self.q,h)
 
     #update q:
     self.q += ALPHA * regr.predict(self.q)
