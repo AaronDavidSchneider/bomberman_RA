@@ -2,7 +2,7 @@
 import numpy as np
 np.seterr(divide='ignore', invalid='ignore')
 
-from time import time, sleep
+import time
 
 from settings import s
 from settings import e
@@ -11,11 +11,11 @@ import random
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
 
-GAMMA = 0.95    # hyperparameter
-ALPHA = 0.5     # hyperparameter Learning rate
-EPSILON = 0.2   # hyperparameter exploration, exploitation
-T = 5           # hyperparameter threshold for statereduction
-TRAIN = True   # set manually as game_state is not existant before act
+GAMMA   = 0.95    # hyperparameter
+ALPHA   = 0.5     # hyperparameter Learning rate
+EPSILON = 0.2     # hyperparameter exploration, exploitation
+T       = 5       # hyperparameter threshold for statereduction
+TRAIN   = True   # set manually as game_state is not existant before act
 
 def short_dist_eucl(self, pois):
     x, y, _, _, _ = self.game_state['self']
@@ -164,6 +164,9 @@ def setup(self):
 
     if not TRAIN:
         self.q = np.load('agent_code/our_agent/q.npy')
+    else:
+        self.timer = time.time()
+        self.round = 0 #Fortschrittsanzeige
 
 def act(self):
     """Called each game step to determine the agent's next action.
@@ -273,3 +276,5 @@ def end_of_episode(self):
     #########################
     # save q
     np.save('agent_code/our_agent/q.npy',self.q)
+    self.round += 1
+    print(f'Next Round: {self.round}   ({np.round(self.round/s.n_rounds*100,2)}%), Time since starting: '+time.strftime("%H:%M:%S", time.gmtime(time.time()-self.timer)))
