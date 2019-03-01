@@ -11,11 +11,20 @@ import random
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
 
-GAMMA   = 0.95    # hyperparameter
-ALPHA   = 0.5     # hyperparameter Learning rate
-EPSILON = 0.2     # hyperparameter exploration, exploitation
-T       = 5       # hyperparameter threshold for statereduction
-TRAIN   = True   # set manually as game_state is not existant before act
+###############################################################################
+# HYPERPARAMETER
+###############################################################################
+
+GAMMA                = 0.95    # hyperparameter
+ALPHA                = 0.5     # hyperparameter Learning rate
+EPSILON              = 0.2     # hyperparameter exploration, exploitation
+T                    = 5       # hyperparameter threshold for statereduction
+TRAIN                = True    # set manually as game_state is not existant before act
+START_FROM_LAST      = True    # caution: Continue last Training
+
+###############################################################################
+# HELP-FUNCTIONS
+###############################################################################
 
 def short_dist_eucl(self, pois):
     x, y, _, _, _ = self.game_state['self']
@@ -142,6 +151,9 @@ def get_reward(self):
 
     return reward
 
+###############################################################################
+# MAIN-FUNCTIONS
+###############################################################################
 
 def setup(self):
     """Called once before a set of games to initialize data structures etc.
@@ -162,11 +174,12 @@ def setup(self):
     self.state = [] # warning: needs to be changed
     self.bomb_history = []
 
-    if not TRAIN:
+    if not TRAIN or START_FROM_LAST:
         self.q = np.load('agent_code/our_agent/q.npy')
-    else:
+    if TRAIN:
         self.timer = time.time()
         self.round = 0 #Fortschrittsanzeige
+
 
 def act(self):
     """Called each game step to determine the agent's next action.
