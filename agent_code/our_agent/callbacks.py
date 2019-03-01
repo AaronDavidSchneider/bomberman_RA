@@ -14,6 +14,7 @@ from sklearn.ensemble import RandomForestRegressor
 GAMMA = 0.95 # hyperparameter
 ALPHA = 0.5 # hyperparameter Learning rate
 EPSILON = 0.2 # hyperparameter exploration, exploitation
+TRAIN = True # set manually as game_state is not existant before act
 
 def short_dist(self, pois):
     x, y, _, _, _ = self.game_state['self']
@@ -34,11 +35,12 @@ def short_dist(self, pois):
 def statereduction(self):
     # init the dimension variables during setup process
     if not hasattr(self, 'game_state'):
-        self.dim=int(np.sqrt(s.cols**2+s.rows**2))+1
+        #self.dim=int(np.sqrt(s.cols**2+s.rows**2))+1
+        dim=8
         #self.state_dim = (self.dim,self.dim,self.dim) # warning: needs to be changed
-        self.state_dim = (self.dim,self.dim) # warning: needs to be changed
+        self.state_dim = (dim,dim,dim) # warning: needs to be changed
         self.dim_mult =  int(np.prod(self.state_dim))
-        self.reduced_state = (int(self.dim-1),int(self.dim-1)) # init with highest state
+        self.reduced_state = (int(dim-1),int(dim-1)) # init with highest state
         return
 
     # Gather information about the game state
@@ -56,11 +58,19 @@ def statereduction(self):
 
     # statereduction-function needs to be changed!!
     coins_state,_ = short_dist(self,coins)
-    bombs_state,_ = short_dist(self,bomb_xys)
-    #others_state,_ = short_dist(self,others)
+    if coins_state > 7: #threshold!
+        coins_state = 7
 
-    #state = (coins_state,bombs_state,others_state)
-    state = (coins_state,bombs_state)
+    bombs_state,_ = short_dist(self,bomb_xys)
+    if bombs_state > 7: #threshold!
+        bombs_state = 7
+
+    others_state,_ = short_dist(self,others)
+    if others_state > 7: #threshold!
+        others_state = 7
+
+    state = (coins_state,bombs_state,others_state)
+    #state = (coins_state,bombs_state)
 
     ####################################
     # Determine valid actions
@@ -119,10 +129,6 @@ def setup(self):
     """
     self.logger.debug('Successfully entered setup code')
 
-    ###############
-    train=True #set manually as game_state is not existant before act
-    ###############
-
     statereduction(self) #init the dimension variables
 
     self.q = np.zeros((*self.state_dim,6))
@@ -131,7 +137,7 @@ def setup(self):
     self.state = [] # warning: needs to be changed
     self.bomb_history = []
 
-    if not train:
+    if not TRAIN:
         self.q = np.load('agent_code/our_agent/q.npy')
 
 def act(self):
@@ -223,12 +229,15 @@ def end_of_episode(self):
 
     #########################
     # do regression:
-    regr = RandomForestRegressor(max_depth=2, n_estimators=100)
-    regr.fit(self.q.reshape(self.dim_mult,6),h.reshape(self.dim_mult,6))
+    #regr = RandomForestRegressor(max_depth=2, n_estimators=100)
+    #regr.fit(self.q.reshape(self.dim_mult,6),h.reshape(self.dim_mult,6))
 
     #update q:
-    self.q += ALPHA * regr.predict(self.q.reshape(self.dim_mult,6)).reshape(*self.state_dim,6)
+    #self.q += ALPHA * regr.predict(self.q.reshape(self.dim_mult,6)).reshape(*self.state_dim,6)
 
+    #######################
+    # Test without regression
+    self.q += ALPHA * h
 
     ##########################
     # flush Y,r,s,a:
