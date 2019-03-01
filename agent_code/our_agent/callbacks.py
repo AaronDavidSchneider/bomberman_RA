@@ -11,12 +11,13 @@ import random
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
 
-GAMMA = 0.95 # hyperparameter
-ALPHA = 0.5 # hyperparameter Learning rate
-EPSILON = 0.2 # hyperparameter exploration, exploitation
-TRAIN = True # set manually as game_state is not existant before act
+GAMMA = 0.95    # hyperparameter
+ALPHA = 0.5     # hyperparameter Learning rate
+EPSILON = 0.2   # hyperparameter exploration, exploitation
+T = 5           # hyperparameter threshold for statereduction
+TRAIN = True   # set manually as game_state is not existant before act
 
-def short_dist(self, pois):
+def short_dist_eucl(self, pois):
     x, y, _, _, _ = self.game_state['self']
     pois = np.array(pois)
 
@@ -31,16 +32,42 @@ def short_dist(self, pois):
 
         return int(dist[m]), m
 
+def short_dist(self, pois):
+    x, y, _, _, _ = self.game_state['self']
+    pois = np.array(pois)
+
+    if pois.size == 0:
+        return T, T
+    else:
+        pois[:,0] -= x
+        pois[:,1] -= y
+
+        dist_x = pois[:,0] + np.ceil((T+1)/2)
+        m_x    = np.argmin(dist_x)
+        dist_y = pois[:,1] + np.ceil((T+1)/2)
+        m_y   = np.argmin(dist_y)
+
+        #select smallest
+        dist_x,dist_y = int(dist_x[m_x]), int(dist_y[m_y])
+
+        # apply threshold
+        dist_x = max(0,dist_x)
+        dist_y = max(0,dist_y)
+
+        dist_x = min(T,dist_x)
+        dist_y = min(T,dist_y)
+
+        return dist_x, dist_y
+
 
 def statereduction(self):
     # init the dimension variables during setup process
     if not hasattr(self, 'game_state'):
         #self.dim=int(np.sqrt(s.cols**2+s.rows**2))+1
-        dim=8
         #self.state_dim = (self.dim,self.dim,self.dim) # warning: needs to be changed
-        self.state_dim = (dim,dim,dim) # warning: needs to be changed
+        self.state_dim = (T+1,T+1,T+1,T+1,2) # warning: needs to be changed
         self.dim_mult =  int(np.prod(self.state_dim))
-        self.reduced_state = (int(dim-1),int(dim-1)) # init with highest state
+        self.reduced_state = (int(T),int(T)) # init with highest state
         return
 
     # Gather information about the game state
@@ -56,28 +83,14 @@ def statereduction(self):
             if (0 < i < bomb_map.shape[0]) and (0 < j < bomb_map.shape[1]):
                 bomb_map[i,j] = min(bomb_map[i,j], t)
 
-    # statereduction-function needs to be changed!!
-    coins_state,_ = short_dist(self,coins)
-    if coins_state > 7: #threshold!
-        coins_state = 7
-
-    bombs_state,_ = short_dist(self,bomb_xys)
-    if bombs_state > 7: #threshold!
-        bombs_state = 7
-
-    others_state,_ = short_dist(self,others)
-    if others_state > 7: #threshold!
-        others_state = 7
-
-    state = (coins_state,bombs_state,others_state)
-    #state = (coins_state,bombs_state)
-
     ####################################
     # Determine valid actions
     # adapted from simple agent:
     # Check which moves make sense at all
 
     directions = [(x,y), (x+1,y), (x-1,y), (x,y+1), (x,y-1)]
+    crate_state = 0
+
     valid_tiles, valid_actions = [], []
     for d in directions:
         if ((arena[d] == 0) and
@@ -86,6 +99,7 @@ def statereduction(self):
             (not d in others) and
             (not d in bomb_xys)):
             valid_tiles.append(d)
+        if (arena[d] == 1): crate_state=1 #there is a crate nearby!
     if (x-1,y) in valid_tiles: valid_actions.append(1)
     if (x+1,y) in valid_tiles: valid_actions.append(0)
     if (x,y-1) in valid_tiles: valid_actions.append(2)
@@ -95,6 +109,17 @@ def statereduction(self):
     if (bombs_left > 0) and (x,y) not in self.bomb_history: valid_actions.append(4)
 
     valid_actions = np.array(valid_actions, dtype=np.int32)
+
+    # statereduction-function needs to be changed!!
+    coins_state_x,coins_state_y = short_dist(self,coins)
+    others_state_x, others_state_y = short_dist(self,others)
+
+    #######
+    # TODO:
+    # Bomb map gibt informationen über bombenfeld, nutze diese um herauszufinden,
+    # was der schnellste Weg aus dem explosionsfeld ist und verarbeite dies als state
+
+    state = (coins_state_x,coins_state_y,others_state_x,others_state_y,crate_state)
 
     return state, valid_actions
 
