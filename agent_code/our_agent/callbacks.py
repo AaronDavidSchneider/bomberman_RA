@@ -18,9 +18,9 @@ from sklearn.ensemble import RandomForestRegressor
 GAMMA                = 0.95    # hyperparameter
 ALPHA                = 0.5     # hyperparameter Learning rate
 EPSILON              = 0.2     # hyperparameter exploration, exploitation
-T                    = 5       # hyperparameter threshold for statereduction
-TRAIN                = True    # set manually as game_state is not existant before act
-START_FROM_LAST      = True    # caution: Continue last Training
+T                    = 9       # hyperparameter threshold for statereduction
+TRAIN                = False    # set manually as game_state is not existant before act
+START_FROM_LAST      = False    # caution: Continue last Training
 
 ###############################################################################
 # HELP-FUNCTIONS
@@ -42,31 +42,38 @@ def short_dist_eucl(self, pois):
         return int(dist[m]), m
 
 def short_dist(self, pois):
+    """
+    Returns 0 if no one in sight, 1 if left, 2 if right
+    """
     x, y, _, _, _ = self.game_state['self']
     pois = np.array(pois)
 
     if pois.size == 0:
-        return T, T
+        return 0, 0
     else:
         pois[:,0] -= x
         pois[:,1] -= y
 
-        dist_x = pois[:,0] + np.ceil((T+1)/2)
+        dist_x = pois[:,0]
         m_x    = np.argmin(dist_x)
-        dist_y = pois[:,1] + np.ceil((T+1)/2)
+        dist_y = pois[:,1]
         m_y   = np.argmin(dist_y)
 
         #select smallest
-        dist_x,dist_y = int(dist_x[m_x]), int(dist_y[m_y])
+        dist = [int(dist_x[m_x]), int(dist_y[m_y])]
 
         # apply threshold
-        dist_x = max(0,dist_x)
-        dist_y = max(0,dist_y)
+        T2 = np.ceil(T/2)
+        r = []
+        for i in range(2):
+            if (dist[i]<0 and dist[i]>(-T2)):
+                r.append(1)
+            elif (dist[i]>=0 and dist[i]<T2):
+                r.append(2)
+            else:
+                r.append(0)
 
-        dist_x = min(T,dist_x)
-        dist_y = min(T,dist_y)
-
-        return dist_x, dist_y
+        return r
 
 
 def statereduction(self):
@@ -74,9 +81,9 @@ def statereduction(self):
     if not hasattr(self, 'game_state'):
         #self.dim=int(np.sqrt(s.cols**2+s.rows**2))+1
         #self.state_dim = (self.dim,self.dim,self.dim) # warning: needs to be changed
-        self.state_dim = (T+1,T+1,T+1,T+1,2) # warning: needs to be changed
+        self.state_dim = (3,3,3,3,2) # warning: needs to be changed
         self.dim_mult =  int(np.prod(self.state_dim))
-        self.reduced_state = (int(T),int(T)) # init with highest state
+        self.reduced_state = (0,0,0,0,0) # init with highest state
         return
 
     # Gather information about the game state
@@ -117,7 +124,41 @@ def statereduction(self):
     # Disallow the BOMB action if agent dropped a bomb in the same spot recently
     if (bombs_left > 0) and (x,y) not in self.bomb_history: valid_actions.append(4)
 
+    dead_ends = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 0)
+                    and ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(0) == 1)]
+    crates = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 1)]
+    action_ideas = []
+    # Add proposal to drop a bomb if at dead end
+    if (x,y) in dead_ends:
+        action_ideas.append('BOMB')
+    # Add proposal to drop a bomb if touching an opponent
+    if len(others) > 0:
+        if (min(abs(xy[0] - x) + abs(xy[1] - y) for xy in others)) <= 1:
+            action_ideas.append('BOMB')
+    # Add proposal to drop a bomb if arrived at target and touching crate
+    if ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(1) > 0):
+        action_ideas.append('BOMB')
+
+    # Add proposal to run away from any nearby bomb about to blow
+    for xb,yb,t in bombs:
+        if (xb == x) and (abs(yb-y) < 4):
+            # Run away
+            if (yb > y): action_ideas.append('UP')
+            if (yb < y): action_ideas.append('DOWN')
+            # If possible, turn a corner
+            action_ideas.append('LEFT')
+            action_ideas.append('RIGHT')
+        if (yb == y) and (abs(xb-x) < 4):
+            # Run away
+            if (xb > x): action_ideas.append('LEFT')
+            if (xb < x): action_ideas.append('RIGHT')
+            # If possible, turn a corner
+            action_ideas.append('UP')
+            action_ideas.append('DOWN')
+
     valid_actions = np.array(valid_actions, dtype=np.int32)
+
+
 
     # statereduction-function needs to be changed!!
     coins_state_x,coins_state_y = short_dist(self,coins)
@@ -130,7 +171,7 @@ def statereduction(self):
 
     state = (coins_state_x,coins_state_y,others_state_x,others_state_y,crate_state)
 
-    return state, valid_actions
+    return state, valid_actions, action_ideas
 
 def get_reward(self):
     """
@@ -195,7 +236,7 @@ def act(self):
     in settings.py, execution is interrupted by the game and the current value
     of self.next_action will be used. The default value is 'WAIT'.
     """
-    self.reduced_state, valid_actions = statereduction(self)
+    self.reduced_state, valid_actions, action_ideas = statereduction(self)
     #self.logger.debug(f'reduced_state: {self.reduced_state}')
 
     possible_actions = np.array(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT'])
@@ -214,11 +255,18 @@ def act(self):
         else:
             self.next_action = possible_actions[valid_actions][np.argmax(self.q[self.reduced_state][valid_actions])]
 
+        # run away from bombs and drop a bomb when next to crate
+        while len(action_ideas) > 0:
+            a = action_ideas.pop()
+            if a in possible_actions[valid_actions]:
+                self.next_action = a
+
         if self.next_action == 'BOMB':
             x, y, _, bombs_left, score = self.game_state['self']
             self.bomb_history.append((x,y))
     else:
         self.next_action = 'WAIT'
+
 
 def reward_update(self):
     """Called once per step to allow intermediate rewards based on game events.
@@ -232,6 +280,9 @@ def reward_update(self):
     self.logger.debug(f'Encountered {len(self.events)} game event(s)')
     if e.INVALID_ACTION in self.events:
         self.logger.debug(f'Encountered INVALID_ACTION')
+
+    self.r.append(get_reward(self))
+    self.state.append(self.reduced_state)
 
     if e.MOVED_RIGHT in self.events:
         self.a.append(0)
@@ -248,8 +299,6 @@ def reward_update(self):
     else:
         self.a.append(-1) #releases error
 
-    self.r.append(get_reward(self))
-    self.state.append(self.reduced_state)
 
 def end_of_episode(self):
     """Called at the end of each game to hand out final rewards and do training.
