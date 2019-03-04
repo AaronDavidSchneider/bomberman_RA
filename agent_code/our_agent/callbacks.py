@@ -8,7 +8,7 @@ from settings import s
 from settings import e
 
 import random
-from sklearn.cluster import KMeans
+#from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
 
 ###############################################################################
@@ -16,16 +16,15 @@ from sklearn.ensemble import RandomForestRegressor
 ###############################################################################
 
 GAMMA                = 0.95    # hyperparameter
-ALPHA                = 0.5     # hyperparameter Learning rate
+ALPHA                = 0.05    # hyperparameter Learning rate
 EPSILON              = 0.2     # hyperparameter exploration, exploitation
 T                    = 9       # hyperparameter threshold for statereduction
-TRAIN                = False    # set manually as game_state is not existant before act
-START_FROM_LAST      = False    # caution: Continue last Training
+TRAIN                = True    # set manually as game_state is not existant before act
+START_FROM_LAST      = True   # caution: Continue last Training
 
 ###############################################################################
 # HELP-FUNCTIONS
 ###############################################################################
-
 def short_dist_eucl(self, pois):
     x, y, _, _, _ = self.game_state['self']
     pois = np.array(pois)
@@ -178,17 +177,25 @@ def get_reward(self):
     REWARD Function, needs to be optimized manually to train the agent with rewards
     """
     reward = 0
+    no_useful_action = True #negative reward by default
+
     if e.COIN_COLLECTED in self.events:
         reward += 100
+        no_useful_action = False
     if e.KILLED_OPPONENT in self.events:
         reward += 500
+        no_useful_action = False
     if e.CRATE_DESTROYED in self.events:
         reward += 20
-
+        no_useful_action = False
     if e.GOT_KILLED in self.events:
         reward -= 100
+        no_useful_action = False
     if e.KILLED_SELF in self.events:
         reward -= 200
+        no_useful_action = False
+    if no_useful_action:
+        reward -= 10
 
     return reward
 
@@ -312,31 +319,42 @@ def end_of_episode(self):
     episode = self.game_state['step'] #Länge der Runde.
     max_steps = s.max_steps
 
-    h = np.zeros_like(self.q)
+    h,q = [],[]
 
     for i in range(episode-2):
-        h[self.state[i]][self.a[i]] = self.r[i] + GAMMA*np.max(self.q[self.state[i+1]])-self.q[self.state[i]][self.a[i]]
+        h.append(self.r[i] + GAMMA*np.max(self.q[self.state[i+1]])-self.q[self.state[i]][self.a[i]])
+        q.append(self.q[self.state[i]][self.a[i]])
+
+    h, q = np.array(h), np.array(q).reshape(-1, 1)
 
     #########################
     # do regression:
-    #regr = RandomForestRegressor(max_depth=2, n_estimators=100)
-    #regr.fit(self.q.reshape(self.dim_mult,6),h.reshape(self.dim_mult,6))
-
+    regr = RandomForestRegressor()
+    regr.fit(q,h)
+    h_res = regr.predict(q)
     #update q:
     #self.q += ALPHA * regr.predict(self.q.reshape(self.dim_mult,6)).reshape(*self.state_dim,6)
+    for i in range(episode-2):
+        self.q[self.state[i]][self.a[i]] += ALPHA * h_res[i]
+
 
     #######################
     # Test without regression
-    self.q += ALPHA * h
-
-    ##########################
-    # flush Y,r,s,a:
-    self.r = []
-    self.a = []
-    self.state = []
+    #self.q += ALPHA * h
 
     #########################
     # save q
     np.save('agent_code/our_agent/q.npy',self.q)
     self.round += 1
     print(f'Next Round: {self.round}   ({np.round(self.round/s.n_rounds*100,2)}%), Time since starting: '+time.strftime("%H:%M:%S", time.gmtime(time.time()-self.timer)))
+
+    # save rewards
+    reward_file = open("agent_code/our_agent/rewards.txt","a+")
+    reward_file.write("{:d}\n".format(int(np.sum(np.array(self.r)))))
+    reward_file.close()
+
+    ##########################
+    # flush Y,r,s,a:
+    self.r = []
+    self.a = []
+    self.state = []
