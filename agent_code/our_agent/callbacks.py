@@ -4,6 +4,9 @@ np.seterr(divide='ignore', invalid='ignore')
 
 import time
 
+from collections import deque
+from random import shuffle
+
 from settings import s
 from settings import e
 
@@ -17,14 +20,164 @@ from sklearn.ensemble import RandomForestRegressor
 
 GAMMA                = 0.95    # hyperparameter
 ALPHA                = 0.05    # hyperparameter Learning rate
-EPSILON              = 0.2     # hyperparameter exploration, exploitation
+EPSILON              = 1     # hyperparameter exploration, exploitation
 T                    = 9       # hyperparameter threshold for statereduction
-TRAIN                = True    # set manually as game_state is not existant before act
-START_FROM_LAST      = True   # caution: Continue last Training
+TRAIN                = False   # set manually as game_state is not existant before act
+START_FROM_LAST      = False   # caution: Continue last Training
 
 ###############################################################################
 # HELP-FUNCTIONS
 ###############################################################################
+action_dict = {'RIGHT':0, 'LEFT':1, 'UP':2, 'DOWN':3, 'BOMB':4, 'WAIT':5}
+
+def look_for_targets(free_space, start, targets, logger=None):
+    """Find direction of closest target that can be reached via free tiles.
+
+    Performs a breadth-first search of the reachable free tiles until a target is encountered.
+    If no target can be reached, the path that takes the agent closest to any target is chosen.
+
+    Args:
+        free_space: Boolean numpy array. True for free tiles and False for obstacles.
+        start: the coordinate from which to begin the search.
+        targets: list or array holding the coordinates of all target tiles.
+        logger: optional logger object for debugging.
+    Returns:
+        coordinate of first step towards closest target or towards tile closest to any target.
+    """
+    if len(targets) == 0: return None
+
+    frontier = [start]
+    parent_dict = {start: start}
+    dist_so_far = {start: 0}
+    best = start
+    best_dist = np.sum(np.abs(np.subtract(targets, start)), axis=1).min()
+
+    while len(frontier) > 0:
+        current = frontier.pop(0)
+        # Find distance from current position to all targets, track closest
+        d = np.sum(np.abs(np.subtract(targets, current)), axis=1).min()
+        if d + dist_so_far[current] <= best_dist:
+            best = current
+            best_dist = d + dist_so_far[current]
+        if d == 0:
+            # Found path to a target's exact position, mission accomplished!
+            best = current
+            break
+        # Add unexplored free neighboring tiles to the queue in a random order
+        x, y = current
+        neighbors = [(x,y) for (x,y) in [(x+1,y), (x-1,y), (x,y+1), (x,y-1)] if free_space[x,y]]
+        shuffle(neighbors)
+        for neighbor in neighbors:
+            if neighbor not in parent_dict:
+                frontier.append(neighbor)
+                parent_dict[neighbor] = current
+                dist_so_far[neighbor] = dist_so_far[current] + 1
+    if logger: logger.debug(f'Suitable target found at {best}')
+    # Determine the first step towards the best found target tile
+    current = best
+    while True:
+        if parent_dict[current] == start: return current
+        current = parent_dict[current]
+
+def get_action_ideas(self,arena,d,x,y,others,bombs,bomb_xys,coins):
+    # Collect basic action proposals in a queue
+    # Later on, the last added action that is also valid will be chosen
+    f_index = []
+    action_ideas = ['UP', 'DOWN', 'LEFT', 'RIGHT']
+    shuffle(action_ideas)
+
+
+    dead_ends = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 0)
+                    and ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(0) == 1)]
+    crates = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 1)]
+    targets = coins + dead_ends + crates
+
+    # Add other agents as targets if in hunting mode or no crates/coins left
+    if self.ignore_others_timer <= 0 or (len(crates) + len(coins) == 0):
+        targets.extend(others)
+
+    # Exclude targets that are currently occupied by a bomb
+    targets = [targets[i] for i in range(len(targets)) if targets[i] not in bomb_xys]
+
+    # Take a step towards the most immediately interesting target
+    free_space = arena == 0
+    if self.ignore_others_timer > 0:
+        for o in others:
+            free_space[o] = False
+    d = look_for_targets(free_space, (x,y), targets, self.logger)
+    if d == (x,y-1): action_ideas.append('UP')
+    if d == (x,y+1): action_ideas.append('DOWN')
+    if d == (x-1,y): action_ideas.append('LEFT')
+    if d == (x+1,y): action_ideas.append('RIGHT')
+    if d is None:
+        self.logger.debug('All targets gone, nothing to do anymore')
+        action_ideas.append('WAIT')
+    f_index.append(0)
+
+    # Add proposal to drop a bomb if at dead end
+    if (x,y) in dead_ends:
+        action_ideas.append('BOMB')
+        f_index.append(1)
+    # Add proposal to drop a bomb if touching an opponent
+    if len(others) > 0:
+        if (min(abs(xy[0] - x) + abs(xy[1] - y) for xy in others)) <= 1:
+            action_ideas.append('BOMB')
+            f_index.append(2)
+    # Add proposal to drop a bomb if arrived at target and touching crate
+    if d == (x,y) and ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(1) > 0):
+        action_ideas.append('BOMB')
+        f_index.append(3)
+
+    # Add proposal to run away from any nearby bomb about to blow
+    for xb,yb,t in bombs:
+        if (xb == x) and (abs(yb-y) < 4):
+            # Run away
+            if (yb > y):
+                action_ideas.append('UP')
+                f_index.append(4)
+            if (yb < y):
+                action_ideas.append('DOWN')
+                f_index.append(4)
+            # If possible, turn a corner
+            action_ideas.append('LEFT')
+            action_ideas.append('RIGHT')
+            f_index.extend([4,4])
+        if (yb == y) and (abs(xb-x) < 4):
+            # Run away
+            if (xb > x):
+                action_ideas.append('LEFT')
+                f_index.append(5)
+            if (xb < x):
+                action_ideas.append('RIGHT')
+                f_index.append(5)
+            # If possible, turn a corner
+            action_ideas.append('UP')
+            action_ideas.append('DOWN')
+            f_index.extend([5,5])
+
+    # Try random direction if directly on top of a bomb
+    for xb,yb,t in bombs:
+        if xb == x and yb == y:
+            action_ideas.extend(action_ideas[:4])
+            f_index.extend([6,6,6,6])
+
+    return action_ideas, f_index
+
+def ideas_to_feature(action_ideas,f_index):
+    """
+    Uses the ideas and their index to create 6 one-hot-feature-vectores
+    """
+    features = []
+    action_ideas = [action_dict[k] for k in action_ideas][4:] #drop first four
+    for a in range(6):
+        f_a = np.zeros(7)
+        for i in range(len(feature_ind)):
+            if action_ideas[i]==a:
+                f_a[feature_ind[i]]=1
+        features.append(f_a)
+    return features
+
+
 def short_dist_eucl(self, pois):
     x, y, _, _, _ = self.game_state['self']
     pois = np.array(pois)
@@ -98,6 +251,13 @@ def statereduction(self):
             if (0 < i < bomb_map.shape[0]) and (0 < j < bomb_map.shape[1]):
                 bomb_map[i,j] = min(bomb_map[i,j], t)
 
+    # If agent has been in the same location three times recently, it's a loop
+    if self.coordinate_history.count((x,y)) > 2:
+        self.ignore_others_timer = 5
+    else:
+        self.ignore_others_timer -= 1
+    self.coordinate_history.append((x,y))
+
     ####################################
     # Determine valid actions
     # adapted from simple agent:
@@ -122,53 +282,24 @@ def statereduction(self):
     if (x,y)   in valid_tiles: valid_actions.append(5)
     # Disallow the BOMB action if agent dropped a bomb in the same spot recently
     if (bombs_left > 0) and (x,y) not in self.bomb_history: valid_actions.append(4)
+    self.logger.debug(f'Valid actions: {valid_actions}')
 
-    dead_ends = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 0)
-                    and ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(0) == 1)]
-    crates = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 1)]
-    action_ideas = []
-    # Add proposal to drop a bomb if at dead end
-    if (x,y) in dead_ends:
-        action_ideas.append('BOMB')
-    # Add proposal to drop a bomb if touching an opponent
-    if len(others) > 0:
-        if (min(abs(xy[0] - x) + abs(xy[1] - y) for xy in others)) <= 1:
-            action_ideas.append('BOMB')
-    # Add proposal to drop a bomb if arrived at target and touching crate
-    if ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(1) > 0):
-        action_ideas.append('BOMB')
-
-    # Add proposal to run away from any nearby bomb about to blow
-    for xb,yb,t in bombs:
-        if (xb == x) and (abs(yb-y) < 4):
-            # Run away
-            if (yb > y): action_ideas.append('UP')
-            if (yb < y): action_ideas.append('DOWN')
-            # If possible, turn a corner
-            action_ideas.append('LEFT')
-            action_ideas.append('RIGHT')
-        if (yb == y) and (abs(xb-x) < 4):
-            # Run away
-            if (xb > x): action_ideas.append('LEFT')
-            if (xb < x): action_ideas.append('RIGHT')
-            # If possible, turn a corner
-            action_ideas.append('UP')
-            action_ideas.append('DOWN')
+    if self.game_state['train']:
+        action_ideas = get_action_ideas(self,arena,d,x,y,others,bombs,bomb_xys,coins)
+    else: action_ideas = []
 
     valid_actions = np.array(valid_actions, dtype=np.int32)
 
-
-
     # statereduction-function needs to be changed!!
-    coins_state_x,coins_state_y = short_dist(self,coins)
-    others_state_x, others_state_y = short_dist(self,others)
+    #coins_state_x,coins_state_y = short_dist(self,coins)
+    #others_state_x, others_state_y = short_dist(self,others)
 
     #######
     # TODO:
     # Bomb map gibt informationen über bombenfeld, nutze diese um herauszufinden,
     # was der schnellste Weg aus dem explosionsfeld ist und verarbeite dies als state
 
-    state = (coins_state_x,coins_state_y,others_state_x,others_state_y,crate_state)
+    #state = (coins_state_x,coins_state_y,others_state_x,others_state_y,crate_state)
 
     return state, valid_actions, action_ideas
 
@@ -180,24 +311,27 @@ def get_reward(self):
     no_useful_action = True #negative reward by default
 
     if e.COIN_COLLECTED in self.events:
-        reward += 100
+        reward += 500
         no_useful_action = False
     if e.KILLED_OPPONENT in self.events:
         reward += 500
         no_useful_action = False
     if e.CRATE_DESTROYED in self.events:
-        reward += 20
+        reward += 100
         no_useful_action = False
     if e.GOT_KILLED in self.events:
-        reward -= 100
+        reward -= 500
         no_useful_action = False
     if e.KILLED_SELF in self.events:
-        reward -= 200
+        reward -= 1000
         no_useful_action = False
     if no_useful_action:
         reward -= 10
 
     return reward
+
+
+
 
 ###############################################################################
 # MAIN-FUNCTIONS
@@ -220,7 +354,13 @@ def setup(self):
     self.r = []
     self.a = []
     self.state = [] # warning: needs to be changed
-    self.bomb_history = []
+
+    # from simple agent
+    # Fixed length FIFO queues to avoid repeating the same actions
+    self.bomb_history = deque([], 5)
+    self.coordinate_history = deque([], 20)
+    # While this timer is positive, agent will not hunt/attack opponents
+    self.ignore_others_timer = 0
 
     if not TRAIN or START_FROM_LAST:
         self.q = np.load('agent_code/our_agent/q.npy')
@@ -255,18 +395,16 @@ def act(self):
     # choose action
 
     if len(valid_actions)>0: #reduces errors
-        prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
+        #prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
         # take decision based on exploaration and exploitation strategy
         if (random.random() < EPSILON and train):
-            self.next_action = np.random.choice(possible_actions[valid_actions], p=prob_actions)
+            while len(action_ideas) > 0:
+                a = action_ideas.pop()
+                if a in possible_actions[valid_actions]:
+                    self.next_action = a
+                    break
         else:
             self.next_action = possible_actions[valid_actions][np.argmax(self.q[self.reduced_state][valid_actions])]
-
-        # run away from bombs and drop a bomb when next to crate
-        while len(action_ideas) > 0:
-            a = action_ideas.pop()
-            if a in possible_actions[valid_actions]:
-                self.next_action = a
 
         if self.next_action == 'BOMB':
             x, y, _, bombs_left, score = self.game_state['self']
@@ -319,19 +457,20 @@ def end_of_episode(self):
     episode = self.game_state['step'] #Länge der Runde.
     max_steps = s.max_steps
 
-    h,q = [],[]
+    h,X = [],[]
 
     for i in range(episode-2):
         h.append(self.r[i] + GAMMA*np.max(self.q[self.state[i+1]])-self.q[self.state[i]][self.a[i]])
-        q.append(self.q[self.state[i]][self.a[i]])
+        X.append([*self.state[i],self.a[i]])
+        #q.append(self.q[self.state[i]][self.a[i]])
 
-    h, q = np.array(h), np.array(q).reshape(-1, 1)
+    #h, q = np.array(h), np.array(q).reshape(-1, 1)
 
     #########################
     # do regression:
     regr = RandomForestRegressor()
-    regr.fit(q,h)
-    h_res = regr.predict(q)
+    regr.fit(X,h)
+    h_res = regr.predict(X)
     #update q:
     #self.q += ALPHA * regr.predict(self.q.reshape(self.dim_mult,6)).reshape(*self.state_dim,6)
     for i in range(episode-2):
@@ -341,6 +480,8 @@ def end_of_episode(self):
     #######################
     # Test without regression
     #self.q += ALPHA * h
+    #for i in range(episode-2):
+    #    self.q[self.state[i]][self.a[i]] += ALPHA * h[i]
 
     #########################
     # save q
