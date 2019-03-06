@@ -22,7 +22,7 @@ GAMMA                = 0.95    # hyperparameter
 ALPHA                = 0.05    # hyperparameter Learning rate
 EPSILON              = 1     # hyperparameter exploration, exploitation
 T                    = 9       # hyperparameter threshold for statereduction
-TRAIN                = False   # set manually as game_state is not existant before act
+TRAIN                = True   # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
 
 ###############################################################################
@@ -85,7 +85,7 @@ def get_action_ideas(self,arena,d,x,y,others,bombs,bomb_xys,coins):
     f_index = []
     action_ideas = ['UP', 'DOWN', 'LEFT', 'RIGHT']
     shuffle(action_ideas)
-
+    f_index.extend([0,0,0,0])
 
     dead_ends = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 0)
                     and ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(0) == 1)]
@@ -112,21 +112,21 @@ def get_action_ideas(self,arena,d,x,y,others,bombs,bomb_xys,coins):
     if d is None:
         self.logger.debug('All targets gone, nothing to do anymore')
         action_ideas.append('WAIT')
-    f_index.append(0)
+    f_index.append(1)
 
     # Add proposal to drop a bomb if at dead end
     if (x,y) in dead_ends:
         action_ideas.append('BOMB')
-        f_index.append(1)
+        f_index.append(2)
     # Add proposal to drop a bomb if touching an opponent
     if len(others) > 0:
         if (min(abs(xy[0] - x) + abs(xy[1] - y) for xy in others)) <= 1:
             action_ideas.append('BOMB')
-            f_index.append(2)
+            f_index.append(3)
     # Add proposal to drop a bomb if arrived at target and touching crate
     if d == (x,y) and ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(1) > 0):
         action_ideas.append('BOMB')
-        f_index.append(3)
+        f_index.append(4)
 
     # Add proposal to run away from any nearby bomb about to blow
     for xb,yb,t in bombs:
@@ -134,108 +134,112 @@ def get_action_ideas(self,arena,d,x,y,others,bombs,bomb_xys,coins):
             # Run away
             if (yb > y):
                 action_ideas.append('UP')
-                f_index.append(4)
+                f_index.append(5)
             if (yb < y):
                 action_ideas.append('DOWN')
-                f_index.append(4)
+                f_index.append(5)
             # If possible, turn a corner
             action_ideas.append('LEFT')
             action_ideas.append('RIGHT')
-            f_index.extend([4,4])
+            f_index.extend([5,5])
         if (yb == y) and (abs(xb-x) < 4):
             # Run away
             if (xb > x):
                 action_ideas.append('LEFT')
-                f_index.append(5)
+                f_index.append(6)
             if (xb < x):
                 action_ideas.append('RIGHT')
-                f_index.append(5)
+                f_index.append(6)
             # If possible, turn a corner
             action_ideas.append('UP')
             action_ideas.append('DOWN')
-            f_index.extend([5,5])
+            f_index.extend([6,6])
 
     # Try random direction if directly on top of a bomb
     for xb,yb,t in bombs:
         if xb == x and yb == y:
             action_ideas.extend(action_ideas[:4])
-            f_index.extend([6,6,6,6])
+            f_index.extend([7,7,7,7])
 
     return action_ideas, f_index
 
-def ideas_to_feature(action_ideas,f_index):
+def ideas_to_feature(self,action_ideas,f_index):
     """
     Uses the ideas and their index to create 6 one-hot-feature-vectores
     """
     features = []
-    action_ideas = [action_dict[k] for k in action_ideas][4:] #drop first four
+    action_ideas = [action_dict[k] for k in action_ideas]
     for a in range(6):
-        f_a = np.zeros(7)
-        for i in range(len(feature_ind)):
+        f_a = np.zeros(self.f_dim)
+        for i in range(len(action_ideas)):
             if action_ideas[i]==a:
-                f_a[feature_ind[i]]=1
+                f_a[f_index[i]]=1
         features.append(f_a)
     return features
 
+# def short_dist_eucl(self, pois):
+#     x, y, _, _, _ = self.game_state['self']
+#     pois = np.array(pois)
+#
+#     if pois.size == 0:
+#         return int(np.sqrt(s.cols**2+s.rows**2)),-1
+#     else:
+#         pois[:,0] -= x
+#         pois[:,1] -= y
+#
+#         dist = np.sqrt(pois[:,0]**2+pois[:,1]**2)
+#         m    = np.argmin(dist)
+#
+#         return int(dist[m]), m
+#
+# def short_dist(self, pois):
+#     """
+#     Returns 0 if no one in sight, 1 if left, 2 if right
+#     """
+#     x, y, _, _, _ = self.game_state['self']
+#     pois = np.array(pois)
+#
+#     if pois.size == 0:
+#         return 0, 0
+#     else:
+#         pois[:,0] -= x
+#         pois[:,1] -= y
+#
+#         dist_x = pois[:,0]
+#         m_x    = np.argmin(dist_x)
+#         dist_y = pois[:,1]
+#         m_y   = np.argmin(dist_y)
+#
+#         #select smallest
+#         dist = [int(dist_x[m_x]), int(dist_y[m_y])]
+#
+#         # apply threshold
+#         T2 = np.ceil(T/2)
+#         r = []
+#         for i in range(2):
+#             if (dist[i]<0 and dist[i]>(-T2)):
+#                 r.append(1)
+#             elif (dist[i]>=0 and dist[i]<T2):
+#                 r.append(2)
+#             else:
+#                 r.append(0)
+#
+#         return r
 
-def short_dist_eucl(self, pois):
-    x, y, _, _, _ = self.game_state['self']
-    pois = np.array(pois)
 
-    if pois.size == 0:
-        return int(np.sqrt(s.cols**2+s.rows**2)),-1
-    else:
-        pois[:,0] -= x
-        pois[:,1] -= y
-
-        dist = np.sqrt(pois[:,0]**2+pois[:,1]**2)
-        m    = np.argmin(dist)
-
-        return int(dist[m]), m
-
-def short_dist(self, pois):
-    """
-    Returns 0 if no one in sight, 1 if left, 2 if right
-    """
-    x, y, _, _, _ = self.game_state['self']
-    pois = np.array(pois)
-
-    if pois.size == 0:
-        return 0, 0
-    else:
-        pois[:,0] -= x
-        pois[:,1] -= y
-
-        dist_x = pois[:,0]
-        m_x    = np.argmin(dist_x)
-        dist_y = pois[:,1]
-        m_y   = np.argmin(dist_y)
-
-        #select smallest
-        dist = [int(dist_x[m_x]), int(dist_y[m_y])]
-
-        # apply threshold
-        T2 = np.ceil(T/2)
-        r = []
-        for i in range(2):
-            if (dist[i]<0 and dist[i]>(-T2)):
-                r.append(1)
-            elif (dist[i]>=0 and dist[i]<T2):
-                r.append(2)
-            else:
-                r.append(0)
-
-        return r
-
-
-def statereduction(self):
+def get_actions(self):
     # init the dimension variables during setup process
     if not hasattr(self, 'game_state'):
         #self.dim=int(np.sqrt(s.cols**2+s.rows**2))+1
         #self.state_dim = (self.dim,self.dim,self.dim) # warning: needs to be changed
-        self.state_dim = (3,3,3,3,2) # warning: needs to be changed
-        self.dim_mult =  int(np.prod(self.state_dim))
-        self.reduced_state = (0,0,0,0,0) # init with highest state
+        #self.state_dim = (3,3,3,3,2) # warning: needs to be changed
+        #self.dim_mult =  int(np.prod(self.state_dim))
+        #self.reduced_state = (0,0,0,0,0) # init with highest state
+
+        self.f_dim = 8 #number of features
+        self.a = int(5) # initialize a
+        self.feature = [np.zeros(self.f_dim)] * 6
+        self.weights = np.random.rand(self.f_dim) # 8 features!
         return
 
     # Gather information about the game state
@@ -284,9 +288,9 @@ def statereduction(self):
     if (bombs_left > 0) and (x,y) not in self.bomb_history: valid_actions.append(4)
     self.logger.debug(f'Valid actions: {valid_actions}')
 
-    if self.game_state['train']:
-        action_ideas = get_action_ideas(self,arena,d,x,y,others,bombs,bomb_xys,coins)
-    else: action_ideas = []
+
+    action_ideas, f_index = get_action_ideas(self,arena,d,x,y,others,bombs,bomb_xys,coins)
+    features = ideas_to_feature(self,action_ideas,f_index)
 
     valid_actions = np.array(valid_actions, dtype=np.int32)
 
@@ -301,7 +305,7 @@ def statereduction(self):
 
     #state = (coins_state_x,coins_state_y,others_state_x,others_state_y,crate_state)
 
-    return state, valid_actions, action_ideas
+    return valid_actions, features, action_ideas
 
 def get_reward(self):
     """
@@ -330,8 +334,11 @@ def get_reward(self):
 
     return reward
 
-
-
+def get_Q_value(self):
+    Q = np.zeros(6)
+    for i in range(6):
+        Q[i] = np.dot(self.feature[i],self.weights)
+    return Q
 
 ###############################################################################
 # MAIN-FUNCTIONS
@@ -348,12 +355,8 @@ def setup(self):
     """
     self.logger.debug('Successfully entered setup code')
 
-    statereduction(self) #init the dimension variables
-
-    self.q = np.zeros((*self.state_dim,6))
-    self.r = []
-    self.a = []
-    self.state = [] # warning: needs to be changed
+    get_actions(self) #init the dimension variables
+    self.Q = get_Q_value(self)
 
     # from simple agent
     # Fixed length FIFO queues to avoid repeating the same actions
@@ -363,7 +366,8 @@ def setup(self):
     self.ignore_others_timer = 0
 
     if not TRAIN or START_FROM_LAST:
-        self.q = np.load('agent_code/our_agent/q.npy')
+        #self.q = np.load('agent_code/our_agent/q.npy')
+        self.weights = np.load('agent_code/our_agent/weights.npy')
     if TRAIN:
         self.timer = time.time()
         self.round = 0 #Fortschrittsanzeige
@@ -383,16 +387,23 @@ def act(self):
     in settings.py, execution is interrupted by the game and the current value
     of self.next_action will be used. The default value is 'WAIT'.
     """
-    self.reduced_state, valid_actions, action_ideas = statereduction(self)
-    #self.logger.debug(f'reduced_state: {self.reduced_state}')
 
+    #save old state
+    self.last_feature  = self.feature
+    self.last_a  = self.a
+    self.Q_last = self.Q
+
+    #self.logger.debug(f'reduced_state: {self.reduced_state}')
+    valid_actions, self.feature, action_ideas = get_actions(self)
     possible_actions = np.array(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT'])
     train = self.game_state['train']
     # in case of exploration, choose random:
-    prob_actions = np.array([.23, .23, .23, .23, .08, 0.])
+    # prob_actions = np.array([.23, .23, .23, .23, .08, 0.])
 
     ##############################
     # choose action
+
+    self.Q = get_Q_value(self)
 
     if len(valid_actions)>0: #reduces errors
         #prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
@@ -402,16 +413,16 @@ def act(self):
                 a = action_ideas.pop()
                 if a in possible_actions[valid_actions]:
                     self.next_action = a
+                    self.a = int(action_dict[a])
                     break
         else:
-            self.next_action = possible_actions[valid_actions][np.argmax(self.q[self.reduced_state][valid_actions])]
+            self.next_action = possible_actions[valid_actions][np.argmax(self.Q[:,valid_actions])]
 
         if self.next_action == 'BOMB':
             x, y, _, bombs_left, score = self.game_state['self']
             self.bomb_history.append((x,y))
     else:
         self.next_action = 'WAIT'
-
 
 def reward_update(self):
     """Called once per step to allow intermediate rewards based on game events.
@@ -426,23 +437,8 @@ def reward_update(self):
     if e.INVALID_ACTION in self.events:
         self.logger.debug(f'Encountered INVALID_ACTION')
 
-    self.r.append(get_reward(self))
-    self.state.append(self.reduced_state)
-
-    if e.MOVED_RIGHT in self.events:
-        self.a.append(0)
-    elif e.MOVED_LEFT in self.events:
-        self.a.append(1)
-    elif e.MOVED_UP in self.events:
-        self.a.append(2)
-    elif e.MOVED_DOWN in self.events:
-        self.a.append(3)
-    elif e.BOMB_DROPPED in self.events:
-        self.a.append(4)
-    elif e.WAITED in self.events:
-        self.a.append(5)
-    else:
-        self.a.append(-1) #releases error
+    delta = get_reward(self)+GAMMA*self.Q[self.a]-self.Q_last[self.last_a]
+    self.weights += ALPHA * delta * self.last_feature[self.last_a]
 
 
 def end_of_episode(self):
@@ -454,38 +450,38 @@ def end_of_episode(self):
     """
     self.logger.debug(f'Encountered {len(self.events)} game event(s) in final step')
 
-    episode = self.game_state['step'] #Länge der Runde.
-    max_steps = s.max_steps
-
-    h,X = [],[]
-
-    for i in range(episode-2):
-        h.append(self.r[i] + GAMMA*np.max(self.q[self.state[i+1]])-self.q[self.state[i]][self.a[i]])
-        X.append([*self.state[i],self.a[i]])
-        #q.append(self.q[self.state[i]][self.a[i]])
-
-    #h, q = np.array(h), np.array(q).reshape(-1, 1)
-
-    #########################
-    # do regression:
-    regr = RandomForestRegressor()
-    regr.fit(X,h)
-    h_res = regr.predict(X)
-    #update q:
-    #self.q += ALPHA * regr.predict(self.q.reshape(self.dim_mult,6)).reshape(*self.state_dim,6)
-    for i in range(episode-2):
-        self.q[self.state[i]][self.a[i]] += ALPHA * h_res[i]
-
-
-    #######################
-    # Test without regression
-    #self.q += ALPHA * h
-    #for i in range(episode-2):
-    #    self.q[self.state[i]][self.a[i]] += ALPHA * h[i]
-
-    #########################
-    # save q
-    np.save('agent_code/our_agent/q.npy',self.q)
+    # episode = self.game_state['step'] #Länge der Runde.
+    # max_steps = s.max_steps
+    #
+    # h,X = [],[]
+    #
+    # for i in range(episode-2):
+    #     h.append(self.r[i] + GAMMA*np.max(self.q[self.state[i+1]])-self.q[self.state[i]][self.a[i]])
+    #     X.append([*self.state[i],self.a[i]])
+    #     #q.append(self.q[self.state[i]][self.a[i]])
+    #
+    # #h, q = np.array(h), np.array(q).reshape(-1, 1)
+    #
+    # #########################
+    # # do regression:
+    # regr = RandomForestRegressor()
+    # regr.fit(X,h)
+    # h_res = regr.predict(X)
+    # #update q:
+    # #self.q += ALPHA * regr.predict(self.q.reshape(self.dim_mult,6)).reshape(*self.state_dim,6)
+    # for i in range(episode-2):
+    #     self.q[self.state[i]][self.a[i]] += ALPHA * h_res[i]
+    #
+    #
+    # #######################
+    # # Test without regression
+    # #self.q += ALPHA * h
+    # #for i in range(episode-2):
+    # #    self.q[self.state[i]][self.a[i]] += ALPHA * h[i]
+    #
+    # #########################
+    # # save q
+    np.save('agent_code/our_agent/weights.npy',self.weights)
     self.round += 1
     print(f'Next Round: {self.round}   ({np.round(self.round/s.n_rounds*100,2)}%), Time since starting: '+time.strftime("%H:%M:%S", time.gmtime(time.time()-self.timer)))
 
@@ -496,6 +492,6 @@ def end_of_episode(self):
 
     ##########################
     # flush Y,r,s,a:
-    self.r = []
-    self.a = []
-    self.state = []
+    # self.r = []
+    # self.a = []
+    # self.state = []
