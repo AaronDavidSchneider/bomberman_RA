@@ -12,7 +12,9 @@ from settings import e
 
 import random
 #from sklearn.cluster import KMeans
-from sklearn.ensemble import RandomForestRegressor
+#from sklearn.ensemble import RandomForestRegressor
+from sklearn import linear_model
+import pickle
 
 ###############################################################################
 # HYPERPARAMETER
@@ -20,8 +22,8 @@ from sklearn.ensemble import RandomForestRegressor
 
 GAMMA                = 0.95    # hyperparameter
 ALPHA                = 0.05    # hyperparameter Learning rate
-EPSILON              = 1     # hyperparameter exploration, exploitation
-T                    = 9       # hyperparameter threshold for statereduction
+EPSILON              = 0.5     # hyperparameter exploration, exploitation
+#T                    = 9      # hyperparameter threshold for statereduction
 TRAIN                = True   # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
 
@@ -82,10 +84,9 @@ def look_for_targets(free_space, start, targets, logger=None):
 def get_action_ideas(self,arena,d,x,y,others,bombs,bomb_xys,coins):
     # Collect basic action proposals in a queue
     # Later on, the last added action that is also valid will be chosen
-    f_index = []
     action_ideas = ['UP', 'DOWN', 'LEFT', 'RIGHT']
     shuffle(action_ideas)
-    f_index.extend([0,0,0,0])
+    f_index = [0,0,0,0]
 
     dead_ends = [(x,y) for x in range(1,16) for y in range(1,16) if (arena[x,y] == 0)
                     and ([arena[x+1,y], arena[x-1,y], arena[x,y+1], arena[x,y-1]].count(0) == 1)]
@@ -239,7 +240,14 @@ def get_actions(self):
         self.f_dim = 8 #number of features
         self.a = int(5) # initialize a
         self.feature = [np.zeros(self.f_dim)] * 6
-        self.weights = np.random.rand(self.f_dim) # 8 features!
+        #self.weights = np.array([np.random.rand(self.f_dim)] * 6) # 8 features!
+
+        # logging:
+        self.a_list = []
+        self.f_list = []
+        self.r_list = []
+        self.Q_list = []
+
         return
 
     # Gather information about the game state
@@ -334,11 +342,11 @@ def get_reward(self):
 
     return reward
 
-def get_Q_value(self):
-    Q = np.zeros(6)
-    for i in range(6):
-        Q[i] = np.dot(self.feature[i],self.weights)
-    return Q
+# def get_Q_value(self):
+#     Q = np.zeros(6)
+#     for a in range(6):
+#         Q[a] = np.dot(self.feature[a],self.weights[a])
+#     return Q
 
 ###############################################################################
 # MAIN-FUNCTIONS
@@ -356,7 +364,12 @@ def setup(self):
     self.logger.debug('Successfully entered setup code')
 
     get_actions(self) #init the dimension variables
-    self.Q = get_Q_value(self)
+    self.Q = [0] * 6
+
+    self.clf = []
+    for a in range(6):
+        self.clf.append(linear_model.SGDRegressor(learning_rate='constant'))
+        self.clf[a].partial_fit(np.array([self.feature[a]]).reshape(1,-1),[self.Q[a]])
 
     # from simple agent
     # Fixed length FIFO queues to avoid repeating the same actions
@@ -367,7 +380,12 @@ def setup(self):
 
     if not TRAIN or START_FROM_LAST:
         #self.q = np.load('agent_code/our_agent/q.npy')
-        self.weights = np.load('agent_code/our_agent/weights.npy')
+        #self.weights = np.load('agent_code/our_agent/weights.npy')
+
+        clf_file = open('clf.obj', 'wb+')
+        self.clf = pickle.load(clf_file)
+        clf_file.close()
+
     if TRAIN:
         self.timer = time.time()
         self.round = 0 #Fortschrittsanzeige
@@ -388,11 +406,6 @@ def act(self):
     of self.next_action will be used. The default value is 'WAIT'.
     """
 
-    #save old state
-    self.last_feature  = self.feature
-    self.last_a  = self.a
-    self.Q_last = self.Q
-
     #self.logger.debug(f'reduced_state: {self.reduced_state}')
     valid_actions, self.feature, action_ideas = get_actions(self)
     possible_actions = np.array(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT'])
@@ -402,10 +415,10 @@ def act(self):
 
     ##############################
     # choose action
-
-    self.Q = get_Q_value(self)
+    self.Q = np.array([self.clf[a].predict(self.feature[a].reshape(1, -1)) for a in range(6)])
 
     if len(valid_actions)>0: #reduces errors
+        #valid_actions=np.delete(valid_actions,np.where(valid_actions == 5))
         #prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
         # take decision based on exploaration and exploitation strategy
         if (random.random() < EPSILON and train):
@@ -416,7 +429,7 @@ def act(self):
                     self.a = int(action_dict[a])
                     break
         else:
-            self.next_action = possible_actions[valid_actions][np.argmax(self.Q[:,valid_actions])]
+            self.next_action = possible_actions[valid_actions][np.argmax(self.Q[valid_actions])]
 
         if self.next_action == 'BOMB':
             x, y, _, bombs_left, score = self.game_state['self']
@@ -437,8 +450,10 @@ def reward_update(self):
     if e.INVALID_ACTION in self.events:
         self.logger.debug(f'Encountered INVALID_ACTION')
 
-    delta = get_reward(self)+GAMMA*self.Q[self.a]-self.Q_last[self.last_a]
-    self.weights += ALPHA * delta * self.last_feature[self.last_a]
+    self.a_list.append(self.a)
+    self.f_list.append(self.feature)
+    self.Q_list.append(self.Q)
+    self.r_list.append(get_reward(self)) #log reward
 
 
 def end_of_episode(self):
@@ -450,48 +465,41 @@ def end_of_episode(self):
     """
     self.logger.debug(f'Encountered {len(self.events)} game event(s) in final step')
 
-    # episode = self.game_state['step'] #Länge der Runde.
-    # max_steps = s.max_steps
-    #
-    # h,X = [],[]
-    #
-    # for i in range(episode-2):
-    #     h.append(self.r[i] + GAMMA*np.max(self.q[self.state[i+1]])-self.q[self.state[i]][self.a[i]])
-    #     X.append([*self.state[i],self.a[i]])
-    #     #q.append(self.q[self.state[i]][self.a[i]])
-    #
-    # #h, q = np.array(h), np.array(q).reshape(-1, 1)
-    #
-    # #########################
-    # # do regression:
-    # regr = RandomForestRegressor()
-    # regr.fit(X,h)
-    # h_res = regr.predict(X)
-    # #update q:
-    # #self.q += ALPHA * regr.predict(self.q.reshape(self.dim_mult,6)).reshape(*self.state_dim,6)
-    # for i in range(episode-2):
-    #     self.q[self.state[i]][self.a[i]] += ALPHA * h_res[i]
-    #
-    #
-    # #######################
-    # # Test without regression
-    # #self.q += ALPHA * h
-    # #for i in range(episode-2):
-    # #    self.q[self.state[i]][self.a[i]] += ALPHA * h[i]
-    #
-    # #########################
-    # # save q
-    np.save('agent_code/our_agent/weights.npy',self.weights)
+    self.f_list = np.array(self.f_list)
+    self.Q_list = np.array(self.Q_list)
+
+    N = self.game_state['step']
+
+    # update each classifier for each possible action:
+    for a in range(6):
+        Y = np.array(self.r_list)[1:,None] + GAMMA * self.Q_list[1:,a]
+        self.clf[a].partial_fit(self.f_list[:-1,a,:], Y)
+
+
+
+    clf_file = open('clf.obj', 'wb+')
+    pickle.dump(self.clf, clf_file)
+    clf_file.close()
+
+    weights, intercept = [], []
+    for a in range(6):
+        weights.append(self.clf[a].coef_)
+        intercept.append(self.clf[a].intercept_)
+    weights, intercept = np.array(weights), np.array(intercept)
+    np.save('weights.npy', weights)
+    np.save('intercept.npy', intercept)
+
     self.round += 1
     print(f'Next Round: {self.round}   ({np.round(self.round/s.n_rounds*100,2)}%), Time since starting: '+time.strftime("%H:%M:%S", time.gmtime(time.time()-self.timer)))
 
     # save rewards
     reward_file = open("agent_code/our_agent/rewards.txt","a+")
-    reward_file.write("{:d}\n".format(int(np.sum(np.array(self.r)))))
+    reward_file.write("{:d}\n".format(int(np.sum(np.array(self.r_list)))))
     reward_file.close()
 
     ##########################
-    # flush Y,r,s,a:
-    # self.r = []
-    # self.a = []
-    # self.state = []
+    # flush lists:
+    self.a_list = []
+    self.f_list = []
+    self.r_list = []
+    self.Q_list = []
