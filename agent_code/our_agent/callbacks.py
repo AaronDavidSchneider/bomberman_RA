@@ -12,9 +12,9 @@ from settings import e
 
 import random
 #from sklearn.cluster import KMeans
-#from sklearn.ensemble import RandomForestRegressor
-from sklearn import linear_model
-import pickle
+from sklearn.ensemble import RandomForestRegressor
+#from sklearn import linear_model
+#import pickle
 
 ###############################################################################
 # HYPERPARAMETER
@@ -22,7 +22,7 @@ import pickle
 
 GAMMA                = 0.95    # hyperparameter
 ALPHA                = 0.05    # hyperparameter Learning rate
-EPSILON              = 0.5     # hyperparameter exploration, exploitation
+EPSILON              = 1     # hyperparameter exploration, exploitation
 #T                    = 9      # hyperparameter threshold for statereduction
 TRAIN                = True   # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
@@ -171,7 +171,7 @@ def ideas_to_feature(self,action_ideas,f_index):
     features = []
     action_ideas = [action_dict[k] for k in action_ideas]
     for a in range(6):
-        f_a = np.zeros(self.f_dim)
+        f_a = np.zeros(self.f_dim, dtype=np.int32)
         for i in range(len(action_ideas)):
             if action_ideas[i]==a:
                 f_a[f_index[i]]=1
@@ -239,7 +239,7 @@ def get_actions(self):
 
         self.f_dim = 8 #number of features
         self.a = int(5) # initialize a
-        self.feature = [np.zeros(self.f_dim)] * 6
+        self.feature = [np.zeros(self.f_dim, dtype=np.int32)] * 6
         #self.weights = np.array([np.random.rand(self.f_dim)] * 6) # 8 features!
 
         # logging:
@@ -329,16 +329,16 @@ def get_reward(self):
         reward += 500
         no_useful_action = False
     if e.CRATE_DESTROYED in self.events:
-        reward += 100
+        reward += 1000
         no_useful_action = False
     if e.GOT_KILLED in self.events:
-        reward -= 500
+        reward -= 50
         no_useful_action = False
     if e.KILLED_SELF in self.events:
-        reward -= 1000
+        reward -= 100
         no_useful_action = False
     if no_useful_action:
-        reward -= 10
+        reward -= 2
 
     return reward
 
@@ -364,12 +364,13 @@ def setup(self):
     self.logger.debug('Successfully entered setup code')
 
     get_actions(self) #init the dimension variables
-    self.Q = [0] * 6
-
-    self.clf = []
-    for a in range(6):
-        self.clf.append(linear_model.SGDRegressor(learning_rate='constant'))
-        self.clf[a].partial_fit(np.array([self.feature[a]]).reshape(1,-1),[self.Q[a]])
+    self.Q = [np.zeros((2,2,2,2,2,2,2,2))] * 6
+    # self.Q = [0] * 6
+    #
+    # self.clf = []
+    # for a in range(6):
+    #     self.clf.append(linear_model.SGDRegressor(learning_rate='constant'))
+    #     self.clf[a].partial_fit(np.array([self.feature[a]]).reshape(1,-1),[self.Q[a]])
 
     # from simple agent
     # Fixed length FIFO queues to avoid repeating the same actions
@@ -379,12 +380,12 @@ def setup(self):
     self.ignore_others_timer = 0
 
     if not TRAIN or START_FROM_LAST:
-        #self.q = np.load('agent_code/our_agent/q.npy')
-        #self.weights = np.load('agent_code/our_agent/weights.npy')
+        self.Q = np.load('q.npy')
+        #self.weights = np.load('weights.npy')
 
-        clf_file = open('agent_code/our_agent/clf.obj', 'wb+')
-        self.clf = pickle.load(clf_file)
-        clf_file.close()
+        # clf_file = open('clf.obj', 'wb+')
+        # self.clf = pickle.load(clf_file)
+        # clf_file.close()
 
     if TRAIN:
         self.timer = time.time()
@@ -415,7 +416,7 @@ def act(self):
 
     ##############################
     # choose action
-    self.Q = np.array([self.clf[a].predict(self.feature[a].reshape(1, -1)) for a in range(6)])
+    # self.Q = np.array([self.clf[a].predict(self.feature[a].reshape(1, -1)) for a in range(6)])
 
     if len(valid_actions)>0: #reduces errors
         #valid_actions=np.delete(valid_actions,np.where(valid_actions == 5))
@@ -429,7 +430,8 @@ def act(self):
                     self.a = int(action_dict[a])
                     break
         else:
-            self.next_action = possible_actions[valid_actions][np.argmax(self.Q[valid_actions])]
+            Q = [self.Q[a][tuple(self.feature[a])] for a in range(6)]
+            self.next_action = possible_actions[valid_actions][np.argmax(np.array(Q[valid_actions]))]
 
         if self.next_action == 'BOMB':
             x, y, _, bombs_left, score = self.game_state['self']
@@ -452,7 +454,7 @@ def reward_update(self):
 
     self.a_list.append(self.a)
     self.f_list.append(self.feature)
-    self.Q_list.append(self.Q)
+    self.Q_list.append([self.Q[a][tuple(self.feature[a])] for a in range(6)])
     self.r_list.append(get_reward(self)) #log reward
 
 
@@ -468,32 +470,38 @@ def end_of_episode(self):
     self.f_list = np.array(self.f_list)
     self.Q_list = np.array(self.Q_list)
 
-    N = self.game_state['step']
-
     # update each classifier for each possible action:
     for a in range(6):
-        Y = np.array(self.r_list)[1:,None] + GAMMA * self.Q_list[1:,a]
-        self.clf[a].partial_fit(self.f_list[:-1,a,:], Y)
+        Y = np.array(self.r_list)[1:] + GAMMA * self.Q_list[1:,a]
+        rho = Y - self.Q_list[:-1,a]
+
+        regr = RandomForestRegressor(max_depth=3,n_estimators=100)
+        regr.fit(self.f_list[:-1,a,:], rho.ravel())
+        for i in range(len(self.f_list)):
+            f = tuple(self.f_list[i][a])
+            self.Q[a][f] += ALPHA * regr.predict(self.f_list[i,a,:].reshape(1, -1))
+
+        #self.clf[a].partial_fit(self.f_list[:-1,a,:], Y.ravel())
 
 
 
-    clf_file = open('agent_code/our_agent/clf.obj', 'wb+')
-    pickle.dump(self.clf, clf_file)
-    clf_file.close()
-
-    weights, intercept = [], []
-    for a in range(6):
-        weights.append(self.clf[a].coef_)
-        intercept.append(self.clf[a].intercept_)
-    weights, intercept = np.array(weights), np.array(intercept)
-    np.save('weights.npy', weights)
-    np.save('intercept.npy', intercept)
+    # clf_file = open('clf.obj', 'wb+')
+    # pickle.dump(self.clf, clf_file)
+    # clf_file.close()
+    #
+    # weights, intercept = [], []
+    # for a in range(6):
+    #     weights.append(self.clf[a].coef_)
+    #     intercept.append(self.clf[a].intercept_)
+    # weights, intercept = np.array(weights), np.array(intercept)
+    # np.save('weights.npy', weights)
+    # np.save('intercept.npy', intercept)
 
     self.round += 1
     print(f'Next Round: {self.round}   ({np.round(self.round/s.n_rounds*100,2)}%), Time since starting: '+time.strftime("%H:%M:%S", time.gmtime(time.time()-self.timer)))
 
     # save rewards
-    reward_file = open("agent_code/our_agent/rewards.txt","a+")
+    reward_file = open("rewards.txt","a+")
     reward_file.write("{:d}\n".format(int(np.sum(np.array(self.r_list)))))
     reward_file.close()
 
