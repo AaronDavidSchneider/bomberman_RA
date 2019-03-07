@@ -382,7 +382,7 @@ def setup(self):
         #self.q = np.load('agent_code/our_agent/q.npy')
         #self.weights = np.load('agent_code/our_agent/weights.npy')
 
-        clf_file = open('clf.obj', 'wb+')
+        clf_file = open('agent_code/our_agent/clf.obj', 'wb+')
         self.clf = pickle.load(clf_file)
         clf_file.close()
 
@@ -477,7 +477,7 @@ def end_of_episode(self):
 
 
 
-    clf_file = open('clf.obj', 'wb+')
+    clf_file = open('agent_code/our_agent/clf.obj', 'wb+')
     pickle.dump(self.clf, clf_file)
     clf_file.close()
 
