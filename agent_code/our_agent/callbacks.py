@@ -13,15 +13,9 @@ from settings import e
 import random
 #from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
+import sys #only needed for training
 #from sklearn import linear_model
 #import pickle
-
-if SSH:
-    import os
-    import pygame.display
-    os.environ["SDL_VIDEODRIVER"] = "dummy"
-    pygame.display.init()
-    screen = pygame.display.set_mode((1,1))
 
 ###############################################################################
 # HYPERPARAMETER
@@ -32,9 +26,8 @@ ALPHA                = 0.05    # hyperparameter Learning rate
 EPSILON              = 1       # hyperparameter exploration, exploitation
 C                    = 10      # hyperparameter: Slope of EPSILON-decay
 #T                    = 9      # hyperparameter threshold for statereduction
-TRAIN                = True    # set manually as game_state is not existant before act
+TRAIN                = False    # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
-SSH                  = True    # set true if Game is run in a ssh session
 
 ###############################################################################
 # HELP-FUNCTIONS
@@ -293,12 +286,12 @@ def get_actions(self):
             (bomb_map[d] > 0) and
             (not d in others) and
             (not d in bomb_xys) and
-            (self.coordinate_history.count(d) < 2)): # behindere loops!
+            (self.coordinate_history.count(d) == 0)): # behindere loops!
             valid_tiles.append(d)
         if ((arena[d] == 0) and
             (bomb_map[d] < 5) and
-            (self.coordinate_history.count(d) > 1)):
-            self.coordinate_history = deque([], 50) #flush coordinate history
+            (self.coordinate_history.count(d) > 0)):
+            self.coordinate_history = deque([], 7) #flush coordinate history
 
     if (x-1,y) in valid_tiles: valid_actions.append(1)
     if (x+1,y) in valid_tiles: valid_actions.append(0)
@@ -385,7 +378,7 @@ def setup(self):
     # from simple agent
     # Fixed length FIFO queues to avoid repeating the same actions
     self.bomb_history = deque([], 5)
-    self.coordinate_history = deque([], 50)
+    self.coordinate_history = deque([], 7)
     # While this timer is positive, agent will not hunt/attack opponents
     self.ignore_others_timer = 0
 
@@ -432,7 +425,7 @@ def act(self):
         #valid_actions=np.delete(valid_actions,np.where(valid_actions == 5))
         #prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
         # take decision based on exploaration and exploitation strategy
-        if (random.random() < eps_greedy(self) and train):
+        if (train and random.random() < eps_greedy(self)):
             while len(action_ideas) > 0:
                 a = action_ideas.pop()
                 if a in possible_actions[valid_actions]:
@@ -440,6 +433,13 @@ def act(self):
                     self.a = int(action_dict[a])
                     break
         else:
+            if (([self.feature[4][i] for i in [2,3,4]].count(1) == 0) or
+                ([self.feature[i][j] for i in range(4) for j in [1,4,5]].count(1) > 0)):
+                # do not drop bomb if not needed!
+                valid_actions = valid_actions[np.where(valid_actions != 4)]
+            if ([self.feature[i][j] for i in range(4) for j in [1,4,5]].count(1) > 0):
+                valid_actions = valid_actions[np.where(valid_actions != 5)]
+
             Q = np.array([self.Q[a][tuple(self.feature[a])] for a in range(6)])
             self.next_action = possible_actions[valid_actions][np.argmax(Q[valid_actions])]
 
@@ -484,12 +484,15 @@ def end_of_episode(self):
     for a in range(6):
         Y = np.array(self.r_list)[1:] + GAMMA * self.Q_list[1:,a]
         rho = Y - self.Q_list[:-1,a]
-
-        regr = RandomForestRegressor(max_depth=3,n_estimators=100)
-        regr.fit(self.f_list[:-1,a,:], rho.ravel())
-        for i in range(len(self.f_list)):
-            f = tuple(self.f_list[i][a])
-            self.Q[a][f] += ALPHA * regr.predict(self.f_list[i,a,:].reshape(1, -1))
+        try:
+            regr = RandomForestRegressor(max_depth=3,n_estimators=100)
+            regr.fit(self.f_list[:-1,a,:], rho.ravel())
+            for i in range(len(self.f_list)):
+                f = tuple(self.f_list[i][a])
+                self.Q[a][f] += ALPHA * regr.predict(self.f_list[i,a,:].reshape(1, -1))
+        except:
+            print('ERROR: execution stuck! check the logs for more information', flush=True)
+            sys.exit(1)
 
         #self.clf[a].partial_fit(self.f_list[:-1,a,:], Y.ravel())
 
@@ -510,7 +513,7 @@ def end_of_episode(self):
     np.save('q.npy', self.Q)
 
     self.round += 1
-    print(f'Next Round: {self.round}   ({np.round(self.round/s.n_rounds*100,2)}%), Time since starting: '+time.strftime("%H:%M:%S", time.gmtime(time.time()-self.timer)))
+    print(f'Next Round: {self.round}   ({np.round(self.round/s.n_rounds*100,2)}%), Time since starting: '+time.strftime("%H:%M:%S", time.gmtime(time.time()-self.timer)), flush=True)
 
     # save rewards
     reward_file = open("rewards.txt","a+")

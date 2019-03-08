@@ -1,4 +1,3 @@
-
 from time import time, sleep
 import contextlib
 from time import time
@@ -12,7 +11,6 @@ import threading
 
 from environment import BombeRLeWorld, ReplayWorld
 from settings import s
-
 
 # Function to run the game logic in a separate thread
 def game_logic(world, user_inputs):
@@ -35,16 +33,15 @@ def game_logic(world, user_inputs):
 
 def main():
     pygame.init()
-
     # Emulate Windows process spawning behaviour under Unix (for testing)
     # mp.set_start_method('spawn')
 
     # Initialize environment and agents
     world = BombeRLeWorld([
-            ('our_agent', True),
-            ('simple_agent', False),
-            ('simple_agent', False),
-            ('simple_agent', False)
+            ('our_agent', False)#,
+            #('simple_agent', False),
+            #('simple_agent', False),
+            #('simple_agent', False)
         ])
     # world = ReplayWorld('Replay 2019-01-30 16:57:42')
     user_inputs = []
