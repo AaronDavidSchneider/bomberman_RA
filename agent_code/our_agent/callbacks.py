@@ -13,6 +13,7 @@ from settings import e
 import random
 #from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
+from scipy.special import softmax
 #from sklearn import linear_model
 #import pickle
 
@@ -22,9 +23,10 @@ from sklearn.ensemble import RandomForestRegressor
 
 GAMMA                = 0.95    # hyperparameter
 ALPHA                = 0.05    # hyperparameter Learning rate
-EPSILON              = 1     # hyperparameter exploration, exploitation
+EPSILON              = 1       # hyperparameter exploration, exploitation
+C                    = 10      # hyperparameter: Slope of EPSILON-decay
 #T                    = 9      # hyperparameter threshold for statereduction
-TRAIN                = True   # set manually as game_state is not existant before act
+TRAIN                = True    # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
 
 ###############################################################################
@@ -276,7 +278,6 @@ def get_actions(self):
     # Check which moves make sense at all
 
     directions = [(x,y), (x+1,y), (x-1,y), (x,y+1), (x,y-1)]
-    crate_state = 0
 
     valid_tiles, valid_actions = [], []
     for d in directions:
@@ -284,14 +285,20 @@ def get_actions(self):
             (self.game_state['explosions'][d] <= 1) and
             (bomb_map[d] > 0) and
             (not d in others) and
-            (not d in bomb_xys)):
+            (not d in bomb_xys) and
+            (self.coordinate_history.count(d) < 2)): # behindere loops!
             valid_tiles.append(d)
-        if (arena[d] == 1): crate_state=1 #there is a crate nearby!
+        if ((arena[d] == 0) and
+            (bomb_map[d] < 5) and
+            (self.coordinate_history.count(d) > 1)):
+            self.coordinate_history = deque([], 50) #flush coordinate history
+
     if (x-1,y) in valid_tiles: valid_actions.append(1)
     if (x+1,y) in valid_tiles: valid_actions.append(0)
     if (x,y-1) in valid_tiles: valid_actions.append(2)
     if (x,y+1) in valid_tiles: valid_actions.append(3)
     if (x,y)   in valid_tiles: valid_actions.append(5)
+
     # Disallow the BOMB action if agent dropped a bomb in the same spot recently
     if (bombs_left > 0) and (x,y) not in self.bomb_history: valid_actions.append(4)
     self.logger.debug(f'Valid actions: {valid_actions}')
@@ -310,8 +317,6 @@ def get_actions(self):
     # TODO:
     # Bomb map gibt informationen über bombenfeld, nutze diese um herauszufinden,
     # was der schnellste Weg aus dem explosionsfeld ist und verarbeite dies als state
-
-    #state = (coins_state_x,coins_state_y,others_state_x,others_state_y,crate_state)
 
     return valid_actions, features, action_ideas
 
@@ -342,11 +347,9 @@ def get_reward(self):
 
     return reward
 
-# def get_Q_value(self):
-#     Q = np.zeros(6)
-#     for a in range(6):
-#         Q[a] = np.dot(self.feature[a],self.weights[a])
-#     return Q
+# make EPSILON greedy
+def eps_greedy(self):
+    return EPSILON/(C*self.round/s.n_rounds+1)
 
 ###############################################################################
 # MAIN-FUNCTIONS
@@ -375,7 +378,7 @@ def setup(self):
     # from simple agent
     # Fixed length FIFO queues to avoid repeating the same actions
     self.bomb_history = deque([], 5)
-    self.coordinate_history = deque([], 20)
+    self.coordinate_history = deque([], 50)
     # While this timer is positive, agent will not hunt/attack opponents
     self.ignore_others_timer = 0
 
@@ -422,7 +425,7 @@ def act(self):
         #valid_actions=np.delete(valid_actions,np.where(valid_actions == 5))
         #prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
         # take decision based on exploaration and exploitation strategy
-        if (random.random() < EPSILON and train):
+        if (random.random() < eps_greedy(self) and train):
             while len(action_ideas) > 0:
                 a = action_ideas.pop()
                 if a in possible_actions[valid_actions]:
@@ -430,8 +433,8 @@ def act(self):
                     self.a = int(action_dict[a])
                     break
         else:
-            Q = [self.Q[a][tuple(self.feature[a])] for a in range(6)]
-            self.next_action = possible_actions[valid_actions][np.argmax(np.array(Q[valid_actions]))]
+            Q = np.array([self.Q[a][tuple(self.feature[a])] for a in range(6)])
+            self.next_action = possible_actions[valid_actions][np.argmax(Q[valid_actions])]
 
         if self.next_action == 'BOMB':
             x, y, _, bombs_left, score = self.game_state['self']
@@ -496,6 +499,8 @@ def end_of_episode(self):
     # weights, intercept = np.array(weights), np.array(intercept)
     # np.save('weights.npy', weights)
     # np.save('intercept.npy', intercept)
+
+    np.save('q.npy', self.Q)
 
     self.round += 1
     print(f'Next Round: {self.round}   ({np.round(self.round/s.n_rounds*100,2)}%), Time since starting: '+time.strftime("%H:%M:%S", time.gmtime(time.time()-self.timer)))
