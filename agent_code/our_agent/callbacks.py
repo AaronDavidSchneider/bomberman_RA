@@ -13,9 +13,15 @@ from settings import e
 import random
 #from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
-from scipy.special import softmax
 #from sklearn import linear_model
 #import pickle
+
+if SSH:
+    import os
+    import pygame.display
+    os.environ["SDL_VIDEODRIVER"] = "dummy"
+    pygame.display.init()
+    screen = pygame.display.set_mode((1,1))
 
 ###############################################################################
 # HYPERPARAMETER
@@ -28,6 +34,7 @@ C                    = 10      # hyperparameter: Slope of EPSILON-decay
 #T                    = 9      # hyperparameter threshold for statereduction
 TRAIN                = True    # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
+SSH                  = True    # set true if Game is run in a ssh session
 
 ###############################################################################
 # HELP-FUNCTIONS
