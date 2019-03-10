@@ -26,7 +26,7 @@ ALPHA                = 0.05    # hyperparameter Learning rate
 EPSILON              = 1       # hyperparameter exploration, exploitation
 C                    = 10      # hyperparameter: Slope of EPSILON-decay
 #T                    = 9      # hyperparameter threshold for statereduction
-TRAIN                = True    # set manually as game_state is not existant before act
+TRAIN                = False    # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
 
 ###############################################################################
@@ -453,21 +453,22 @@ def act(self):
         #valid_actions=np.delete(valid_actions,np.where(valid_actions == 5))
         #prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
         # take decision based on exploaration and exploitation strategy
+
         if ((train and random.random() < eps_greedy(self)) or
             ([self.feature[i][j] for i in range(6) for j in [5,6,7]].count(1) > 0)):
             get_deterministic_action(self,possible_actions,valid_actions,action_ideas)
         else:
             valid_actions = is_loop(self,valid_actions)
-            if (([self.feature[4][i] for i in [2,3]].count(1) == 0) or
-                ([self.feature[i][j] for i in range(4) for j in [1]].count(1) > 0)):
+            if (([self.feature[4][j] for j in [2,3,4]].count(1) == 0) or
+                ([self.feature[a][j] for a in range(4) for j in [1]].count(1) > 0)):
                 # do not drop bomb if not needed!
                 valid_actions = valid_actions[np.where(valid_actions != 4)]
-            if (([self.feature[i][j] for i in range(4) for j in [1]].count(1) > 0) and
+            if (([self.feature[a][j] for a in range(4) for j in [1]].count(1) > 0) and
                 (len(valid_actions)>1)):
                 valid_actions = valid_actions[np.where(valid_actions != 5)]
 
             if len(valid_actions) > 0:
-                Q = np.array([self.Q[a][tuple(self.feature[a])] for a in range(6)])
+                Q = np.array([self.Q[a][tuple(self.reduced_feature[a])] for a in range(6)])
                 self.next_action = possible_actions[valid_actions][np.argmax(Q[valid_actions])]
             else:
                 self.next_action = 'WAIT'
