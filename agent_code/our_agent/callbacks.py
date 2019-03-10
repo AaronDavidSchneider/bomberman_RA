@@ -26,7 +26,7 @@ ALPHA                = 0.05    # hyperparameter Learning rate
 EPSILON              = 1       # hyperparameter exploration, exploitation
 C                    = 10      # hyperparameter: Slope of EPSILON-decay
 #T                    = 9      # hyperparameter threshold for statereduction
-TRAIN                = False    # set manually as game_state is not existant before act
+TRAIN                = True    # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
 
 ###############################################################################
@@ -242,6 +242,7 @@ def get_actions(self):
         self.f_dim = 8 #number of features
         self.a = int(5) # initialize a
         self.feature = [np.zeros(self.f_dim, dtype=np.int32)] * 6
+        self.reduced_feature = [np.zeros(self.f_dim-3, dtype=np.int32)] * 6
         #self.weights = np.array([np.random.rand(self.f_dim)] * 6) # 8 features!
 
         # logging:
@@ -264,8 +265,15 @@ def get_actions(self):
         for (i,j) in [(xb+h, yb) for h in range(-3,4)] + [(xb, yb+h) for h in range(-3,4)]:
             if (0 < i < bomb_map.shape[0]) and (0 < j < bomb_map.shape[1]):
                 bomb_map[i,j] = min(bomb_map[i,j], t)
-
     # If agent has been in the same location three times recently, it's a loop
+    #
+    #
+    # if self.X and len(bomb_xys)>0:
+    #     np.save('bomb_map',np.array(bomb_map))
+    # else:
+    #     self.X = False
+
+
     if self.coordinate_history.count((x,y)) > 2:
         self.ignore_others_timer = 5
     else:
@@ -285,13 +293,8 @@ def get_actions(self):
             (self.game_state['explosions'][d] <= 1) and
             (bomb_map[d] > 0) and
             (not d in others) and
-            (not d in bomb_xys) and
-            (self.coordinate_history.count(d) == 0)): # behindere loops!
-            valid_tiles.append(d)
-        if ((arena[d] == 0) and
-            (bomb_map[d] < 5) and
-            (self.coordinate_history.count(d) > 0)):
-            self.coordinate_history = deque([], 7) #flush coordinate history
+            (not d in bomb_xys)):
+                valid_tiles.append(d)
 
     if (x-1,y) in valid_tiles: valid_actions.append(1)
     if (x+1,y) in valid_tiles: valid_actions.append(0)
@@ -351,6 +354,29 @@ def get_reward(self):
 def eps_greedy(self):
     return EPSILON/(C*self.round/s.n_rounds+1)
 
+def get_deterministic_action(self,possible_actions,valid_actions,action_ideas):
+    while len(action_ideas) > 0:
+        a = action_ideas.pop()
+        if a in possible_actions[valid_actions]:
+            self.next_action = a
+            self.a = int(action_dict[a])
+            break
+
+def is_loop(self,valid_actions):
+    x, y, _, _, _ = self.game_state['self']
+    directions = [(x,y), (x+1,y), (x-1,y), (x,y+1), (x,y-1)]
+    actions_2_dir = [5,0,1,3,2]
+    #valid_tiles, valid_actions = [], []
+    for i in range(5):
+        d = directions[i]
+        a = actions_2_dir[i]
+        if ((a in valid_actions) and
+            (self.coordinate_history.count(d) > 1)):
+            valid_actions = valid_actions[np.where(valid_actions != a)]
+    return valid_actions
+
+
+
 ###############################################################################
 # MAIN-FUNCTIONS
 ###############################################################################
@@ -365,9 +391,9 @@ def setup(self):
     file for debugging (see https://docs.python.org/3.7/library/logging.html).
     """
     self.logger.debug('Successfully entered setup code')
-
+    #self.X = True
     get_actions(self) #init the dimension variables
-    self.Q = [np.zeros((2,2,2,2,2,2,2,2))] * 6
+    self.Q = [np.zeros((2,2,2,2,2))] * 6
     # self.Q = [0] * 6
     #
     # self.clf = []
@@ -378,7 +404,7 @@ def setup(self):
     # from simple agent
     # Fixed length FIFO queues to avoid repeating the same actions
     self.bomb_history = deque([], 5)
-    self.coordinate_history = deque([], 7)
+    self.coordinate_history = deque([], 15)
     # While this timer is positive, agent will not hunt/attack opponents
     self.ignore_others_timer = 0
 
@@ -412,8 +438,10 @@ def act(self):
 
     #self.logger.debug(f'reduced_state: {self.reduced_state}')
     valid_actions, self.feature, action_ideas = get_actions(self)
+    self.reduced_feature = [self.feature[a][:5] for a in range(6)]
     possible_actions = np.array(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT'])
     train = self.game_state['train']
+    self.logger.debug(f'reduced_feature : {self.reduced_feature[0]}')
     # in case of exploration, choose random:
     # prob_actions = np.array([.23, .23, .23, .23, .08, 0.])
 
@@ -425,23 +453,24 @@ def act(self):
         #valid_actions=np.delete(valid_actions,np.where(valid_actions == 5))
         #prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
         # take decision based on exploaration and exploitation strategy
-        if (train and random.random() < eps_greedy(self)):
-            while len(action_ideas) > 0:
-                a = action_ideas.pop()
-                if a in possible_actions[valid_actions]:
-                    self.next_action = a
-                    self.a = int(action_dict[a])
-                    break
+        if ((train and random.random() < eps_greedy(self)) or
+            ([self.feature[i][j] for i in range(6) for j in [5,6,7]].count(1) > 0)):
+            get_deterministic_action(self,possible_actions,valid_actions,action_ideas)
         else:
-            if (([self.feature[4][i] for i in [2,3,4]].count(1) == 0) or
-                ([self.feature[i][j] for i in range(4) for j in [1,4,5]].count(1) > 0)):
+            valid_actions = is_loop(self,valid_actions)
+            if (([self.feature[4][i] for i in [2,3]].count(1) == 0) or
+                ([self.feature[i][j] for i in range(4) for j in [1]].count(1) > 0)):
                 # do not drop bomb if not needed!
                 valid_actions = valid_actions[np.where(valid_actions != 4)]
-            if ([self.feature[i][j] for i in range(4) for j in [1,4,5]].count(1) > 0):
+            if (([self.feature[i][j] for i in range(4) for j in [1]].count(1) > 0) and
+                (len(valid_actions)>1)):
                 valid_actions = valid_actions[np.where(valid_actions != 5)]
 
-            Q = np.array([self.Q[a][tuple(self.feature[a])] for a in range(6)])
-            self.next_action = possible_actions[valid_actions][np.argmax(Q[valid_actions])]
+            if len(valid_actions) > 0:
+                Q = np.array([self.Q[a][tuple(self.feature[a])] for a in range(6)])
+                self.next_action = possible_actions[valid_actions][np.argmax(Q[valid_actions])]
+            else:
+                self.next_action = 'WAIT'
 
         if self.next_action == 'BOMB':
             x, y, _, bombs_left, score = self.game_state['self']
@@ -463,8 +492,8 @@ def reward_update(self):
         self.logger.debug(f'Encountered INVALID_ACTION')
 
     self.a_list.append(self.a)
-    self.f_list.append(self.feature)
-    self.Q_list.append([self.Q[a][tuple(self.feature[a])] for a in range(6)])
+    self.f_list.append(self.reduced_feature)
+    self.Q_list.append([self.Q[a][tuple(self.reduced_feature[a])] for a in range(6)])
     self.r_list.append(get_reward(self)) #log reward
 
 
@@ -486,10 +515,10 @@ def end_of_episode(self):
         rho = Y - self.Q_list[:-1,a]
         try:
             regr = RandomForestRegressor(max_depth=3,n_estimators=100)
-            regr.fit(self.f_list[:-1,a,:], rho.ravel())
+            regr.fit(self.f_list[:-1,a], rho.ravel())
             for i in range(len(self.f_list)):
                 f = tuple(self.f_list[i][a])
-                self.Q[a][f] += ALPHA * regr.predict(self.f_list[i,a,:].reshape(1, -1))
+                self.Q[a][f] += ALPHA * regr.predict(self.f_list[i,a].reshape(1, -1))
         except:
             print('ERROR: execution stuck! check the logs for more information', flush=True)
             sys.exit(1)
