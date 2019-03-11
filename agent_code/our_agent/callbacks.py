@@ -11,7 +11,9 @@ from settings import s
 from settings import e
 
 import random
-from sklearn.ensemble import RandomForestRegressor
+#from sklearn.ensemble import RandomForestRegressor
+from sklearn import linear_model
+import pickle
 import sys #only needed to escape training if fails, needs to be commented in final
 
 ###############################################################################
@@ -172,7 +174,6 @@ def ideas_to_feature(self,action_ideas,f_index):
     Uses the action ideas and their index to create 6 one-hot-feature-vectores
 
     Features in Q:
-        Feature 0: one for all directions
         Feature 1: one for direction of target
         Feature 2: one if bomb at deadend possible
         Feature 3: one if bomb at opponent possible
@@ -180,6 +181,7 @@ def ideas_to_feature(self,action_ideas,f_index):
 
     Features not in Q:
         Feature 5-7: Run away from bomb if possible
+        Feature 0: one for all directions
     """
     features = []
     action_ideas = [action_dict[k] for k in action_ideas]
@@ -198,7 +200,7 @@ def get_actions(self):
         self.f_dim = 8 #number of features
         self.a = int(5) # initialize a
         self.feature = [np.zeros(self.f_dim, dtype=np.int32)] * 6
-        self.reduced_feature = [np.zeros(self.f_dim-3, dtype=np.int32)] * 6
+        self.reduced_feature = [np.zeros(self.f_dim-4, dtype=np.int32)] * 6
         #self.weights = np.array([np.random.rand(self.f_dim)] * 6) # 8 features!
 
         # logging:
@@ -227,6 +229,7 @@ def get_actions(self):
     else:
         self.ignore_others_timer -= 1
     self.coordinate_history.append((x,y))
+    self.long_coordinate_history.append((x,y))
 
     ####################################
     # Determine valid actions
@@ -276,7 +279,7 @@ def get_reward(self):
         reward += 500
         no_useful_action = False
     if e.CRATE_DESTROYED in self.events:
-        reward += 1000
+        reward += 500
         no_useful_action = False
     if e.GOT_KILLED in self.events:
         reward -= 50
@@ -285,7 +288,7 @@ def get_reward(self):
         reward -= 100
         no_useful_action = False
     if no_useful_action:
-        reward -= 2
+        reward -= 10
 
     return reward
 
@@ -310,7 +313,7 @@ def is_loop(self,valid_actions):
         d = directions[i]
         a = actions_2_dir[i]
         if ((a in valid_actions) and
-            (self.coordinate_history.count(d) > 0)):
+            (self.long_coordinate_history.count(d) > 0)):
             valid_actions = valid_actions[np.where(valid_actions != a)]
     return valid_actions
 
@@ -331,13 +334,24 @@ def setup(self):
     """
     self.logger.debug('Successfully entered setup code')
     get_actions(self) #init the dimension variables
-    self.Q = [np.zeros((2,2,2,2,2))] * 6
+    #self.Q = [np.zeros((2,2,2,2))] * 6
+
+    self.Q = [0] * 6
+    self.clf = []
+    for a in range(6):
+        self.clf.append(linear_model.SGDRegressor(learning_rate='constant'))
+        self.clf[a].partial_fit(np.array([self.reduced_feature[a]]).reshape(1,-1),[self.Q[a]])
+
     self.bomb_history = deque([], 5)
-    self.coordinate_history = deque([], 15)
+    self.coordinate_history = deque([], 10)
+    self.long_coordinate_history = deque([], 30)
     self.ignore_others_timer = 0
 
     if not TRAIN or START_FROM_LAST:
-        self.Q = np.load('q.npy')
+        #self.Q = np.load('q.npy')
+        clf_file = open('clf.obj', 'wb+')
+        self.clf = pickle.load(clf_file)
+        clf_file.close()
     if TRAIN:
         self.timer = time.time()
         self.round = 0 #Fortschrittsanzeige
@@ -359,19 +373,21 @@ def act(self):
     """
 
     valid_actions, self.feature, action_ideas = get_actions(self)
-    self.reduced_feature = [self.feature[a][:5] for a in range(6)]
+    self.reduced_feature = [self.feature[a][1:5] for a in range(6)]
     possible_actions = np.array(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT'])
     train = self.game_state['train']
-    self.logger.debug(f'reduced_feature : {self.reduced_feature[0]}')
 
     # in case of random exploration:
-    # prob_actions = np.array([.23, .23, .23, .23, .08, 0.])
-    # prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
+    prob_actions = np.array([.23, .23, .23, .23, .08, 0.])
+    prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
+
+    self.Q = np.array([self.clf[a].predict(self.reduced_feature[a].reshape(1, -1)) for a in range(6)])
 
     if len(valid_actions) > 0: #reduces errors
         # take decision based on exploaration and exploitation strategy
-        if ((train and random.random() < eps_greedy(self)) or
-            ([self.feature[i][j] for i in range(6) for j in [5,6,7]].count(1) > 0)):
+        if (train and random.random() < eps_greedy(self)):
+            self.next_action = np.random.choice(possible_actions[valid_actions], p = prob_actions)
+        elif ([self.feature[i][j] for i in range(6) for j in [5,6,7]].count(1) > 0):
             get_deterministic_action(self,possible_actions,valid_actions,action_ideas)
         else:
             valid_actions = is_loop(self,valid_actions)
@@ -383,8 +399,8 @@ def act(self):
                 valid_actions = valid_actions[np.where(valid_actions != 5)]
 
             if len(valid_actions) > 0:
-                Q = np.array([self.Q[a][tuple(self.reduced_feature[a])] for a in range(6)])
-                self.next_action = possible_actions[valid_actions][np.argmax(Q[valid_actions])]
+                #Q = np.array([self.Q[a][tuple(self.reduced_feature[a])] for a in range(6)])
+                self.next_action = possible_actions[valid_actions][np.argmax(self.Q[valid_actions])]
             else:
                 self.next_action = 'WAIT'
 
@@ -409,7 +425,8 @@ def reward_update(self):
 
     self.a_list.append(self.a)
     self.f_list.append(self.reduced_feature)
-    self.Q_list.append([self.Q[a][tuple(self.reduced_feature[a])] for a in range(6)])
+    #self.Q_list.append([self.Q[a][tuple(self.reduced_feature[a])] for a in range(6)])
+    self.Q_list.append(self.Q)
     self.r_list.append(get_reward(self)) #log reward
 
 
@@ -425,28 +442,50 @@ def end_of_episode(self):
     self.f_list = np.array(self.f_list)
     self.Q_list = np.array(self.Q_list)
 
-    # update each classifier for each possible action:
-    for a in range(6):
-        Y = np.array(self.r_list)[1:] + GAMMA * self.Q_list[1:,a]
-        rho = Y - self.Q_list[:-1,a]
-        try:
-            regr = RandomForestRegressor(max_depth=3,n_estimators=100)
-            regr.fit(self.f_list[:-1,a], rho.ravel())
-            for i in range(len(self.f_list)):
-                f = tuple(self.f_list[i][a])
-                self.Q[a][f] += ALPHA * regr.predict(self.f_list[i,a].reshape(1, -1))
-        except:
-            print('ERROR: execution stuck! check the logs for more information', flush=True)
-            sys.exit(1)
+    # normalize rewards:
+    self.r_list = np.array(self.r_list)
+    self.r_list = self.r_list.shape[0]*self.r_list / np.sum(self.r_list)
 
-    np.save('q.npy', self.Q)
+    # update each classifier for each possible action:
+    # Q Learning, off-policy
+    Y = self.r_list[1:] + GAMMA * np.max(self.Q_list[1:],axis=1)
+
+    for a in range(6):
+        self.clf[a].partial_fit(self.f_list[:-1,a,:], Y[a].ravel())
+
+    clf_file = open('clf.obj', 'wb+')
+    pickle.dump(self.clf, clf_file)
+    clf_file.close()
+
+    weights, intercept = [], []
+    for a in range(6):
+        weights.append(self.clf[a].coef_)
+        intercept.append(self.clf[a].intercept_)
+    weights, intercept = np.array(weights), np.array(intercept)
+    np.save('weights.npy', weights)
+    np.save('intercept.npy', intercept)
+
+    # for a in range(6):
+    #     rho = Y - self.Q_list[:-1,a]
+    #     try:
+    #         regr = RandomForestRegressor(max_depth=3,n_estimators=100)
+    #         regr.fit(self.f_list[:-1,a], rho.ravel())
+    #         for i in range(len(self.f_list)):
+    #             f = tuple(self.f_list[i][a])
+    #             self.Q[a][f] += ALPHA * regr.predict(self.f_list[i,a].reshape(1, -1))
+    #
+    #     except:
+    #         print('ERROR: execution stuck! check the logs for more information', flush=True)
+    #         sys.exit(1)
+    #
+    # np.save('q.npy', self.Q)
 
     self.round += 1
     print(f'Next Round: {self.round}   ({np.round(self.round/s.n_rounds*100,2)}%), Time since starting: '+time.strftime("%H:%M:%S", time.gmtime(time.time()-self.timer)), flush=True)
 
     # save rewards
     reward_file = open("rewards.txt","a+")
-    reward_file.write("{:d}\n".format(int(np.sum(np.array(self.r_list)))))
+    reward_file.write("{:d}\n".format(int(np.sum(np.array(self.r_list))/self.r_list.shape[0])))
     reward_file.close()
 
     ##########################
