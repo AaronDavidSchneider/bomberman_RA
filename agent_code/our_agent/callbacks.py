@@ -25,7 +25,7 @@ ALPHA                = 0.1    # hyperparameter Learning rate
 EPSILON              = 1       # hyperparameter exploration, exploitation
 C                    = 10      # hyperparameter: Slope of EPSILON-decay
 TRAIN                = True    # set manually as game_state is not existant before act
-START_FROM_LAST      = False   # caution: Continue last Training
+START_FROM_LAST      = True   # caution: Continue last Training
 
 ###############################################################################
 # HELP-FUNCTIONS
@@ -200,7 +200,7 @@ def get_actions(self):
         self.f_dim = 8 #number of features
         self.a = int(5) # initialize a
         self.feature = [np.zeros(self.f_dim, dtype=np.int32)] * 6
-        self.reduced_feature = [np.zeros(self.f_dim-4, dtype=np.int32)] * 6
+        self.reduced_feature = [np.zeros(self.f_dim-3, dtype=np.int32)] * 6
         #self.weights = np.array([np.random.rand(self.f_dim)] * 6) # 8 features!
 
         # logging:
@@ -344,14 +344,22 @@ def setup(self):
 
     self.bomb_history = deque([], 5)
     self.coordinate_history = deque([], 10)
-    self.long_coordinate_history = deque([], 30)
+    self.long_coordinate_history = deque([], 10)
     self.ignore_others_timer = 0
 
     if not TRAIN or START_FROM_LAST:
         #self.Q = np.load('q.npy')
-        clf_file = open('clf.obj', 'wb+')
-        self.clf = pickle.load(clf_file)
+        clf_file = open('clf.obj', 'rb')
+        Unpickler = pickle.Unpickler(clf_file)
+        self.clf = Unpickler.load()
         clf_file.close()
+
+        # w = np.load('weights.npy')
+        # i = np.load('intercept.npy')
+        # for a in range(6):
+        #     self.clf[a].coef_ = w
+        #     self.clf[a].intercept_ = i
+
     if TRAIN:
         self.timer = time.time()
         self.round = 0 #Fortschrittsanzeige
@@ -373,12 +381,12 @@ def act(self):
     """
 
     valid_actions, self.feature, action_ideas = get_actions(self)
-    self.reduced_feature = [self.feature[a][1:5] for a in range(6)]
+    self.reduced_feature = [self.feature[a][:5] for a in range(6)]
     possible_actions = np.array(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT'])
     train = self.game_state['train']
 
     # in case of random exploration:
-    prob_actions = np.array([.23, .23, .23, .23, .08, 0.])
+    prob_actions = np.array([.23, .23, .23, .23, .07, .01])
     prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
 
     self.Q = np.array([self.clf[a].predict(self.reduced_feature[a].reshape(1, -1)) for a in range(6)])
@@ -444,14 +452,15 @@ def end_of_episode(self):
 
     # normalize rewards:
     self.r_list = np.array(self.r_list)
-    self.r_list = self.r_list.shape[0]*self.r_list / np.sum(self.r_list)
+    r_list_normed = self.r_list.shape[0]*self.r_list / np.sum(self.r_list)
 
     # update each classifier for each possible action:
     # Q Learning, off-policy
-    Y = self.r_list[1:] + GAMMA * np.max(self.Q_list[1:],axis=1)
+    #Y = self.r_list[1:] + GAMMA * np.max(self.Q_list[1:],axis=1)
 
     for a in range(6):
-        self.clf[a].partial_fit(self.f_list[:-1,a,:], Y[a].ravel())
+        Y = r_list_normed[1:,None] + GAMMA * self.Q_list[1:,a]
+        self.clf[a].partial_fit(self.f_list[:-1,a,:], Y.ravel())
 
     clf_file = open('clf.obj', 'wb+')
     pickle.dump(self.clf, clf_file)
