@@ -186,7 +186,7 @@ def get_actions(self):
         self.f_dim = 8 #number of features
         self.a = int(5) # initialize a
         self.feature = [np.zeros(self.f_dim, dtype=np.int32)] * 6
-        self.reduced_feature = [np.zeros(self.f_dim-3, dtype=np.int32)] * 6
+        self.reduced_feature = [np.zeros(self.f_dim-4, dtype=np.int32)] * 6
         #self.weights = np.array([np.random.rand(self.f_dim)] * 6) # 8 features!
 
         # logging:
@@ -319,7 +319,7 @@ def setup(self):
     """
     self.logger.debug('Successfully entered setup code')
     get_actions(self) #init the dimension variables
-    self.Q = [np.zeros((2,2,2,2,2))] * 6
+    self.Q = [np.zeros((2,2,2,2))] * 6
     self.bomb_history = deque([], 5)
     self.coordinate_history = deque([], 15)
     # While this timer is positive, agent will not hunt/attack opponents
@@ -349,7 +349,7 @@ def act(self):
     """
 
     valid_actions, self.feature, action_ideas = get_actions(self)
-    self.reduced_feature = [self.feature[a][:5] for a in range(6)]
+    self.reduced_feature = [self.feature[a][1:5] for a in range(6)]
     possible_actions = np.array(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT'])
     train = self.game_state['train']
     self.logger.debug(f'reduced_feature : {self.reduced_feature[0]}')
@@ -363,11 +363,13 @@ def act(self):
         # take decision based on exploaration and exploitation strategy
 
         if ((train and random.random() < eps_greedy(self)) or
-            ([self.feature[i][j] for i in range(6) for j in [5,6,7]].count(1) > 0)):
+            ([self.feature[i][j] for i in range(6) for j in [5,6,7]].count(1) > 0) or
+            ([self.feature[i][j] for i in range(6) for j in [1,2,3,4]].count(1)==0)):
             get_deterministic_action(self,possible_actions,valid_actions,action_ideas)
         else:
             valid_actions = is_loop(self,valid_actions)
-            if (([self.feature[4][j] for j in [2,3,4]].count(1) == 0)):# or
+            if (([self.feature[4][j] for j in [2,3,4]].count(1) == 0)):
+                #([self.feature[a][1] for a in range(4)].count(1) > 0)):
                 # do not drop bomb if not needed!
                 valid_actions = valid_actions[np.where(valid_actions != 4)]
             if (([self.feature[a][j] for a in range(4) for j in [1]].count(1) > 0) and
