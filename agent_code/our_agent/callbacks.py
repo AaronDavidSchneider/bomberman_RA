@@ -11,22 +11,18 @@ from settings import s
 from settings import e
 
 import random
-#from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestRegressor
-import sys #only needed for training
-#from sklearn import linear_model
-#import pickle
+import sys #only needed to escape training if fails, needs to be commented in final
 
 ###############################################################################
 # HYPERPARAMETER
 ###############################################################################
 
 GAMMA                = 0.95    # hyperparameter
-ALPHA                = 0.05    # hyperparameter Learning rate
+ALPHA                = 0.1    # hyperparameter Learning rate
 EPSILON              = 1       # hyperparameter exploration, exploitation
 C                    = 10      # hyperparameter: Slope of EPSILON-decay
-#T                    = 9      # hyperparameter threshold for statereduction
-TRAIN                = False    # set manually as game_state is not existant before act
+TRAIN                = True    # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
 
 ###############################################################################
@@ -131,6 +127,11 @@ def get_action_ideas(self,arena,d,x,y,others,bombs,bomb_xys,coins):
         action_ideas.append('BOMB')
         f_index.append(4)
 
+    # above the features covered by Q
+    ##############################################
+    # below the features not covered by Q, instead if those action_ideas exist:
+    #   safety-margin, the simple_agent behaviour will be executed
+
     # Add proposal to run away from any nearby bomb about to blow
     for xb,yb,t in bombs:
         if (xb == x) and (abs(yb-y) < 4):
@@ -168,7 +169,17 @@ def get_action_ideas(self,arena,d,x,y,others,bombs,bomb_xys,coins):
 
 def ideas_to_feature(self,action_ideas,f_index):
     """
-    Uses the ideas and their index to create 6 one-hot-feature-vectores
+    Uses the action ideas and their index to create 6 one-hot-feature-vectores
+
+    Features in Q:
+        Feature 0: one for all directions
+        Feature 1: one for direction of target
+        Feature 2: one if bomb at deadend possible
+        Feature 3: one if bomb at opponent possible
+        Feature 4: one if bomb at target crate possible
+
+    Features not in Q:
+        Feature 5-7: Run away from bomb if possible
     """
     features = []
     action_ideas = [action_dict[k] for k in action_ideas]
@@ -180,64 +191,9 @@ def ideas_to_feature(self,action_ideas,f_index):
         features.append(f_a)
     return features
 
-# def short_dist_eucl(self, pois):
-#     x, y, _, _, _ = self.game_state['self']
-#     pois = np.array(pois)
-#
-#     if pois.size == 0:
-#         return int(np.sqrt(s.cols**2+s.rows**2)),-1
-#     else:
-#         pois[:,0] -= x
-#         pois[:,1] -= y
-#
-#         dist = np.sqrt(pois[:,0]**2+pois[:,1]**2)
-#         m    = np.argmin(dist)
-#
-#         return int(dist[m]), m
-#
-# def short_dist(self, pois):
-#     """
-#     Returns 0 if no one in sight, 1 if left, 2 if right
-#     """
-#     x, y, _, _, _ = self.game_state['self']
-#     pois = np.array(pois)
-#
-#     if pois.size == 0:
-#         return 0, 0
-#     else:
-#         pois[:,0] -= x
-#         pois[:,1] -= y
-#
-#         dist_x = pois[:,0]
-#         m_x    = np.argmin(dist_x)
-#         dist_y = pois[:,1]
-#         m_y   = np.argmin(dist_y)
-#
-#         #select smallest
-#         dist = [int(dist_x[m_x]), int(dist_y[m_y])]
-#
-#         # apply threshold
-#         T2 = np.ceil(T/2)
-#         r = []
-#         for i in range(2):
-#             if (dist[i]<0 and dist[i]>(-T2)):
-#                 r.append(1)
-#             elif (dist[i]>=0 and dist[i]<T2):
-#                 r.append(2)
-#             else:
-#                 r.append(0)
-#
-#         return r
-
-
 def get_actions(self):
     # init the dimension variables during setup process
     if not hasattr(self, 'game_state'):
-        #self.dim=int(np.sqrt(s.cols**2+s.rows**2))+1
-        #self.state_dim = (self.dim,self.dim,self.dim) # warning: needs to be changed
-        #self.state_dim = (3,3,3,3,2) # warning: needs to be changed
-        #self.dim_mult =  int(np.prod(self.state_dim))
-        #self.reduced_state = (0,0,0,0,0) # init with highest state
 
         self.f_dim = 8 #number of features
         self.a = int(5) # initialize a
@@ -265,14 +221,6 @@ def get_actions(self):
         for (i,j) in [(xb+h, yb) for h in range(-3,4)] + [(xb, yb+h) for h in range(-3,4)]:
             if (0 < i < bomb_map.shape[0]) and (0 < j < bomb_map.shape[1]):
                 bomb_map[i,j] = min(bomb_map[i,j], t)
-    # If agent has been in the same location three times recently, it's a loop
-    #
-    #
-    # if self.X and len(bomb_xys)>0:
-    #     np.save('bomb_map',np.array(bomb_map))
-    # else:
-    #     self.X = False
-
 
     if self.coordinate_history.count((x,y)) > 2:
         self.ignore_others_timer = 5
@@ -311,15 +259,6 @@ def get_actions(self):
     features = ideas_to_feature(self,action_ideas,f_index)
 
     valid_actions = np.array(valid_actions, dtype=np.int32)
-
-    # statereduction-function needs to be changed!!
-    #coins_state_x,coins_state_y = short_dist(self,coins)
-    #others_state_x, others_state_y = short_dist(self,others)
-
-    #######
-    # TODO:
-    # Bomb map gibt informationen über bombenfeld, nutze diese um herauszufinden,
-    # was der schnellste Weg aus dem explosionsfeld ist und verarbeite dies als state
 
     return valid_actions, features, action_ideas
 
@@ -371,7 +310,7 @@ def is_loop(self,valid_actions):
         d = directions[i]
         a = actions_2_dir[i]
         if ((a in valid_actions) and
-            (self.coordinate_history.count(d) > 1)):
+            (self.coordinate_history.count(d) > 0)):
             valid_actions = valid_actions[np.where(valid_actions != a)]
     return valid_actions
 
@@ -391,31 +330,14 @@ def setup(self):
     file for debugging (see https://docs.python.org/3.7/library/logging.html).
     """
     self.logger.debug('Successfully entered setup code')
-    #self.X = True
     get_actions(self) #init the dimension variables
     self.Q = [np.zeros((2,2,2,2,2))] * 6
-    # self.Q = [0] * 6
-    #
-    # self.clf = []
-    # for a in range(6):
-    #     self.clf.append(linear_model.SGDRegressor(learning_rate='constant'))
-    #     self.clf[a].partial_fit(np.array([self.feature[a]]).reshape(1,-1),[self.Q[a]])
-
-    # from simple agent
-    # Fixed length FIFO queues to avoid repeating the same actions
     self.bomb_history = deque([], 5)
     self.coordinate_history = deque([], 15)
-    # While this timer is positive, agent will not hunt/attack opponents
     self.ignore_others_timer = 0
 
     if not TRAIN or START_FROM_LAST:
         self.Q = np.load('q.npy')
-        #self.weights = np.load('weights.npy')
-
-        # clf_file = open('clf.obj', 'wb+')
-        # self.clf = pickle.load(clf_file)
-        # clf_file.close()
-
     if TRAIN:
         self.timer = time.time()
         self.round = 0 #Fortschrittsanzeige
@@ -436,31 +358,24 @@ def act(self):
     of self.next_action will be used. The default value is 'WAIT'.
     """
 
-    #self.logger.debug(f'reduced_state: {self.reduced_state}')
     valid_actions, self.feature, action_ideas = get_actions(self)
     self.reduced_feature = [self.feature[a][:5] for a in range(6)]
     possible_actions = np.array(['RIGHT', 'LEFT', 'UP', 'DOWN', 'BOMB','WAIT'])
     train = self.game_state['train']
     self.logger.debug(f'reduced_feature : {self.reduced_feature[0]}')
-    # in case of exploration, choose random:
+
+    # in case of random exploration:
     # prob_actions = np.array([.23, .23, .23, .23, .08, 0.])
+    # prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
 
-    ##############################
-    # choose action
-    # self.Q = np.array([self.clf[a].predict(self.feature[a].reshape(1, -1)) for a in range(6)])
-
-    if len(valid_actions)>0: #reduces errors
-        #valid_actions=np.delete(valid_actions,np.where(valid_actions == 5))
-        #prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
+    if len(valid_actions) > 0: #reduces errors
         # take decision based on exploaration and exploitation strategy
-
         if ((train and random.random() < eps_greedy(self)) or
             ([self.feature[i][j] for i in range(6) for j in [5,6,7]].count(1) > 0)):
             get_deterministic_action(self,possible_actions,valid_actions,action_ideas)
         else:
             valid_actions = is_loop(self,valid_actions)
-            if (([self.feature[4][j] for j in [2,3,4]].count(1) == 0) or
-                ([self.feature[a][j] for a in range(4) for j in [1]].count(1) > 0)):
+            if (([self.feature[4][j] for j in [2,3,4]].count(1) == 0)):
                 # do not drop bomb if not needed!
                 valid_actions = valid_actions[np.where(valid_actions != 4)]
             if (([self.feature[a][j] for a in range(4) for j in [1]].count(1) > 0) and
@@ -523,22 +438,6 @@ def end_of_episode(self):
         except:
             print('ERROR: execution stuck! check the logs for more information', flush=True)
             sys.exit(1)
-
-        #self.clf[a].partial_fit(self.f_list[:-1,a,:], Y.ravel())
-
-
-
-    # clf_file = open('clf.obj', 'wb+')
-    # pickle.dump(self.clf, clf_file)
-    # clf_file.close()
-    #
-    # weights, intercept = [], []
-    # for a in range(6):
-    #     weights.append(self.clf[a].coef_)
-    #     intercept.append(self.clf[a].intercept_)
-    # weights, intercept = np.array(weights), np.array(intercept)
-    # np.save('weights.npy', weights)
-    # np.save('intercept.npy', intercept)
 
     np.save('q.npy', self.Q)
 
