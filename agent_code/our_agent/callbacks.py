@@ -373,7 +373,7 @@ def act(self):
     # choose action
 
     self.Q = np.array([self.clf[a].predict(self.reduced_feature[a].reshape(1, -1)) for a in range(6)])
-
+    if len(valid_actions) > 0:
         if ((train and random.random() < eps_greedy(self)) or
             ([self.feature[i][j] for i in range(6) for j in [5,6,7]].count(1) > 0) or
             ([self.feature[i][j] for i in range(6) for j in [1,2,3,4]].count(1)==0)):
