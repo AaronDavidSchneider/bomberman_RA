@@ -23,7 +23,7 @@ GAMMA                = 0.95    # hyperparameter
 ALPHA                = 0.1    # hyperparameter Learning rate
 EPSILON              = 1       # hyperparameter exploration, exploitation
 C                    = 10      # hyperparameter: Slope of EPSILON-decay
-TRAIN                = False    # set manually as game_state is not existant before act
+TRAIN                = True    # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
 
 ###############################################################################
