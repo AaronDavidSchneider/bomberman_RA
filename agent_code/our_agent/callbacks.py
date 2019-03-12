@@ -12,7 +12,7 @@ from settings import e
 
 import random
 from sklearn.ensemble import RandomForestRegressor
-import sys #only needed for training
+import sys #only needed to escape process in case of error in end_of_episode
 
 
 ###############################################################################
@@ -23,7 +23,6 @@ GAMMA                = 0.95    # hyperparameter
 ALPHA                = 0.05    # hyperparameter Learning rate
 EPSILON              = 1       # hyperparameter exploration, exploitation
 C                    = 10      # hyperparameter: Slope of EPSILON-decay
-#T                    = 9      # hyperparameter threshold for statereduction
 TRAIN                = False    # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
 
@@ -367,13 +366,13 @@ def act(self):
             ([self.feature[i][j] for i in range(6) for j in [1,2,3,4]].count(1)==0)):
             get_deterministic_action(self,possible_actions,valid_actions,action_ideas)
         else:
-            valid_actions = is_loop(self,valid_actions)
+            valid_actions = is_loop(self,valid_actions) #remove tiles that result in loop
             if (([self.feature[4][j] for j in [2,3,4]].count(1) == 0)):
-                #([self.feature[a][1] for a in range(4)].count(1) > 0)):
                 # do not drop bomb if not needed!
                 valid_actions = valid_actions[np.where(valid_actions != 4)]
             if (([self.feature[a][j] for a in range(4) for j in [1]].count(1) > 0) and
                 (len(valid_actions)>1)):
+                # do not wait, if not needed!
                 valid_actions = valid_actions[np.where(valid_actions != 5)]
 
             if len(valid_actions) > 0:
@@ -421,7 +420,7 @@ def end_of_episode(self):
 
     # update each classifier for each possible action:
     for a in range(6):
-        Y = np.array(self.r_list)[1:] + GAMMA * self.Q_list[1:,a]
+        Y = np.array(self.r_list)[1:] + GAMMA * self.Q_list[1:,a] # SARSA
         rho = Y - self.Q_list[:-1,a]
         try:
             regr = RandomForestRegressor(max_depth=3,n_estimators=100)
