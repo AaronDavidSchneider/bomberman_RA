@@ -24,7 +24,7 @@ ALPHA                = 0.05    # hyperparameter Learning rate
 EPSILON              = 1       # hyperparameter exploration, exploitation
 C                    = 10      # hyperparameter: Slope of EPSILON-decay
 #T                    = 9      # hyperparameter threshold for statereduction
-TRAIN                = False    # set manually as game_state is not existant before act
+TRAIN                = True    # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
 
 ###############################################################################
@@ -264,7 +264,7 @@ def get_reward(self):
         reward += 500
         no_useful_action = False
     if e.CRATE_DESTROYED in self.events:
-        reward += 1000
+        reward += 200
         no_useful_action = False
     if e.GOT_KILLED in self.events:
         reward -= 50
@@ -273,7 +273,7 @@ def get_reward(self):
         reward -= 100
         no_useful_action = False
     if no_useful_action:
-        reward -= 2
+        reward -= 4
 
     return reward
 
@@ -333,6 +333,7 @@ def setup(self):
         self.round = 0 #Fortschrittsanzeige
 
 
+
 def act(self):
     """Called each game step to determine the agent's next action.
 
@@ -358,14 +359,15 @@ def act(self):
     # choose action
 
     if len(valid_actions)>0: #reduces errors
-        #valid_actions=np.delete(valid_actions,np.where(valid_actions == 5))
-        #prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
+        # prob_actions = np.array([0.23,0.23,0.23,0.23,0.07,0.01])
+        # prob_actions = prob_actions[valid_actions]/np.sum(prob_actions[valid_actions]) #norm and drop others
         # take decision based on exploaration and exploitation strategy
-
         if ((train and random.random() < eps_greedy(self)) or
             ([self.feature[i][j] for i in range(6) for j in [5,6,7]].count(1) > 0) or
             ([self.feature[i][j] for i in range(6) for j in [1,2,3,4]].count(1)==0)):
             get_deterministic_action(self,possible_actions,valid_actions,action_ideas)
+        # elif (train and random.random() < eps_greedy(self)):
+        #     self.next_action = np.random.choice(possible_actions[valid_actions], p = prob_actions)
         else:
             valid_actions = is_loop(self,valid_actions)
             if (([self.feature[4][j] for j in [2,3,4]].count(1) == 0)):
@@ -416,22 +418,37 @@ def end_of_episode(self):
     """
     self.logger.debug(f'Encountered {len(self.events)} game event(s) in final step')
 
+    self.a_list = np.array(self.a_list)
     self.f_list = np.array(self.f_list)
     self.Q_list = np.array(self.Q_list)
+    self.r_list = np.array(self.r_list)
 
     # update each classifier for each possible action:
     for a in range(6):
-        Y = np.array(self.r_list)[1:] + GAMMA * self.Q_list[1:,a]
-        rho = Y - self.Q_list[:-1,a]
-        try:
-            regr = RandomForestRegressor(max_depth=3,n_estimators=100)
-            regr.fit(self.f_list[:-1,a], rho.ravel())
-            for i in range(len(self.f_list)):
-                f = tuple(self.f_list[i][a])
-                self.Q[a][f] += ALPHA * regr.predict(self.f_list[i,a].reshape(1, -1))
-        except:
-            print('ERROR: execution stuck! check the logs for more information', flush=True)
-            sys.exit(1)
+        a_list = self.a_list[np.where(self.a_list == a)]
+        f_list = self.f_list[np.where(self.a_list == a)]
+        Q_list = self.Q_list[np.where(self.a_list == a)]
+        r_list = self.r_list[np.where(self.a_list == a)]
+
+        Y = r_list[1:] + GAMMA * Q_list[1:,a]
+        rho = Y - Q_list[:-1,a]
+
+        if len(a_list)>1:
+            try:
+                regr = RandomForestRegressor(max_depth=2,n_estimators=100)
+                regr.fit(f_list[:-1,a], rho.ravel())
+                for i in range(len(f_list)):
+                    f = tuple(f_list[i][a])
+                    self.Q[a][f] += ALPHA * regr.predict(f_list[i,a].reshape(1, -1))
+            except Exception as e:
+                # Just print(e) is cleaner and more likely what you want,
+                # but if you insist on printing message specifically whenever possible...
+                if hasattr(e, 'message'):
+                    print(e.message)
+                else:
+                    print(e)
+                    print('ERROR: execution stuck! check the logs for more information', flush=True)
+                    sys.exit(1)
 
     np.save('q.npy', self.Q)
 
