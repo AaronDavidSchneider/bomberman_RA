@@ -12,7 +12,6 @@ from settings import e
 
 import random
 from sklearn.ensemble import RandomForestRegressor
-import sys #only needed for training
 
 
 ###############################################################################
@@ -23,8 +22,7 @@ GAMMA                = 0.95    # hyperparameter
 ALPHA                = 0.05    # hyperparameter Learning rate
 EPSILON              = 1       # hyperparameter exploration, exploitation
 C                    = 10      # hyperparameter: Slope of EPSILON-decay
-#T                    = 9      # hyperparameter threshold for statereduction
-TRAIN                = True    # set manually as game_state is not existant before act
+TRAIN                = False    # set manually as game_state is not existant before act
 START_FROM_LAST      = False   # caution: Continue last Training
 
 ###############################################################################
@@ -448,7 +446,6 @@ def end_of_episode(self):
                 else:
                     print(e)
                     print('ERROR: execution stuck! check the logs for more information', flush=True)
-                    sys.exit(1)
 
     np.save('q.npy', self.Q)
 
